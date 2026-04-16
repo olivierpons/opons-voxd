@@ -28,6 +28,13 @@
 
 ---
 
+
+### Screenshots
+
+| 空闲 | 录音中 |
+|:---:|:---:|
+| ![空闲](../screenshots/voice_in_inactive.png) | ![录音中](../screenshots/voice_in_active.png) |
+
 ## 功能特点
 
 - **100% 本地运行** ── 音频在 CPU 或 GPU 上处理，绝不外传

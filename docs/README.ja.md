@@ -28,6 +28,13 @@ AIの助けを借りて開発しました。
 
 ---
 
+
+### Screenshots
+
+| 待機中 | 録音中 |
+|:---:|:---:|
+| ![待機中](../screenshots/voice_in_inactive.png) | ![録音中](../screenshots/voice_in_active.png) |
+
 ## 機能
 
 - **100%ローカル** ── 音声はCPUまたはGPUで処理され、外部に送信されません

@@ -13,4 +13,5 @@ if [ -f "$LOG" ] && [ "$(stat -c%s "$LOG" 2>/dev/null)" -gt "$MAX_BYTES" ]; then
 fi
 
 echo "=== voice_in started at $(date) ===" >> "$LOG"
+export VOICE_IN_COMMANDS=1
 exec ./voice_in 2>>"$LOG"

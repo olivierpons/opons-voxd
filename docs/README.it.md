@@ -28,6 +28,13 @@ Sviluppato con l'aiuto dell'intelligenza artificiale.
 
 ---
 
+
+### Screenshots
+
+| Inattivo | Registrazione |
+|:---:|:---:|
+| ![Inattivo](../screenshots/voice_in_inactive.png) | ![Registrazione](../screenshots/voice_in_active.png) |
+
 ## Caratteristiche
 
 - **100% locale** — l'audio viene elaborato su CPU o GPU, mai inviato

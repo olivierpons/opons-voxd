@@ -28,6 +28,12 @@ Built with the help of AI.
 
 **Right-click** the icon for a menu with Toggle / Quit.
 
+### Screenshots
+
+| Idle | Recording |
+|:---:|:---:|
+| ![Idle](screenshots/voice_in_inactive.png) | ![Recording](screenshots/voice_in_active.png) |
+
 ---
 
 ## Features
@@ -39,7 +45,7 @@ Built with the help of AI.
 - **System tray integration** — unobtrusive icon in your taskbar
 - **Dual clipboard** — text is pushed to both PRIMARY and CLIPBOARD X11 selections
 - **Desktop notifications** — transcribed text displayed as a notification
-- **Voice commands** — built-in French commands for punctuation ("point", "virgule", "nouvelle ligne"...)
+- **Voice commands** — built-in French commands for punctuation ("point", "virgule", "nouvelle ligne"...), disabled by default (`VOICE_IN_COMMANDS=1` to enable)
 - **Auto-capitalization** — sentences are capitalized automatically
 - **Auto-start** — can be configured to launch at login
 
@@ -160,6 +166,13 @@ All configuration is done through environment variables (all optional):
 | `VOICE_IN_MODEL` | `whisper.cpp/models/ggml-medium.bin` | `VOICE_IN_MODEL=whisper.cpp/models/ggml-small.bin ./voice_in` |
 | `VOICE_IN_LANGUAGE` | `fr` | `VOICE_IN_LANGUAGE=en ./voice_in` |
 | `VOICE_IN_DEVICE` | system default | `VOICE_IN_DEVICE=3 ./voice_in` |
+| `VOICE_IN_COMMANDS` | `0` (disabled) | `VOICE_IN_COMMANDS=1 ./voice_in` |
+
+### Voice Commands
+
+Voice commands are **disabled by default**. When enabled (`VOICE_IN_COMMANDS=1`), spoken keywords are replaced with their corresponding characters. For example, saying "point" inserts `.`, "virgule" inserts `,`, "nouvelle ligne" inserts a line break, etc.
+
+This avoids unexpected replacements when you actually want to write the word "point" or "virgule" in your text.
 
 ### Available Models
 

@@ -28,6 +28,12 @@ Réalisé avec l'aide de l'intelligence artificielle.
 
 **Clic droit** sur l'icône pour un menu Toggle / Quitter.
 
+### Captures d'écran
+
+| Inactif | Enregistrement |
+|:---:|:---:|
+| ![Inactif](../screenshots/voice_in_inactive.png) | ![Enregistrement](../screenshots/voice_in_active.png) |
+
 ---
 
 ## Fonctionnalités
@@ -39,7 +45,7 @@ Réalisé avec l'aide de l'intelligence artificielle.
 - **Intégration system tray** — icône discrète dans la barre des tâches
 - **Double presse-papier** — texte copié dans PRIMARY et CLIPBOARD
 - **Notifications bureau** — le texte transcrit est affiché en notification
-- **Commandes vocales** — commandes françaises intégrées ("point", "virgule", "nouvelle ligne"...)
+- **Commandes vocales** — commandes françaises intégrées ("point", "virgule", "nouvelle ligne"...), désactivées par défaut (`VOICE_IN_COMMANDS=1` pour activer)
 - **Majuscules automatiques** — les phrases sont capitalisées automatiquement
 - **Démarrage automatique** — configurable au login
 

@@ -17,6 +17,13 @@ Erstellt mit Hilfe von künstlicher Intelligenz.
 
 ---
 
+
+### Screenshots
+
+| Inaktiv | Aufnahme |
+|:---:|:---:|
+| ![Inaktiv](../screenshots/voice_in_inactive.png) | ![Aufnahme](../screenshots/voice_in_active.png) |
+
 ## Funktionsweise
 
 1. Ein kleines Symbol erscheint im System-Tray
@@ -27,6 +34,13 @@ Erstellt mit Hilfe von künstlicher Intelligenz.
 6. Einfügen mit `Ctrl+Shift+V`, `Shift+Insert` oder Mittelklick
 
 ---
+
+
+### Screenshots
+
+| Inaktiv | Aufnahme |
+|:---:|:---:|
+| ![Inaktiv](../screenshots/voice_in_inactive.png) | ![Aufnahme](../screenshots/voice_in_active.png) |
 
 ## Funktionen
 
