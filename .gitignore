@@ -1,0 +1,21 @@
+# Compiled binary
+voice_in
+
+# whisper.cpp (cloned at build time via make setup)
+whisper.cpp/
+
+# Logs
+*.log
+*.log.old
+
+# Build artifacts
+*.o
+*.d
+
+# Editor / OS junk
+*.swp
+*.swo
+*~
+.DS_Store
+.vscode/
+.idea/
