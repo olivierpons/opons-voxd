@@ -48,7 +48,8 @@
 - **轻量级** ── 单个 C 语言二进制文件（约 100 KB），无需 Python
 - **系统托盘集成** ── 任务栏中的小图标
 - **双剪贴板** ── 文本同时写入 PRIMARY 和 CLIPBOARD
-- **语音命令** ── 内置法语标点和格式命令，默认禁用（`VOICE_IN_COMMANDS=1` 启用）。目前仅支持法语；可编辑 `voice_in.c` 中的 `g_voice_pairs` 表添加其他语言。
+- **语音命令** ── 每种语言一个命令文件（`commands/` 目录），默认禁用（`VOICE_IN_COMMANDS=1` 启用）。添加新语言只需创建 `commands/xx.txt`，无需重新编译。
+- **瞬态通知** ── 通知出现后自动消失。设置 `VOICE_IN_NOTIFY_PERSIST=1` 可保留在通知历史中。
 - **自动大写** ── 句首字母自动大写
 - **开机自启** ── 可配置为登录时自动启动
 
@@ -85,3 +86,9 @@ make
 全部采用 MIT 许可证：Whisper 模型（OpenAI）、whisper.cpp（Georgi Gerganov）以及本项目。
 
 完整文档请参阅[主 README](../README.md)。
+
+---
+
+## 代码风格
+
+本项目遵循 **Linux 内核编码风格**（`Documentation/process/coding-style.rst`），由 Olivier Pons 进行适配：K&R 花括号风格、4 空格缩进、直接使用 `struct name`（不使用 typedef）、无人为前缀（`s_`、`t_`、`e_`）、`return value;` 不加括号、kernel-doc 注释风格、每行最多 80 个字符。完整详情请参阅[主 README](../README.md)。

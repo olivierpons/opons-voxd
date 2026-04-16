@@ -47,7 +47,8 @@ Desarrollado con la ayuda de inteligencia artificial.
 - **Ligero** — binario C único (~100 KB), sin Python ni dependencias de ejecución
 - **Integración en la bandeja** — icono discreto en la barra de tareas
 - **Doble portapapeles** — texto copiado en PRIMARY y CLIPBOARD
-- **Comandos de voz** — comandos franceses integrados para puntuación y formato, desactivados por defecto (`VOICE_IN_COMMANDS=1` para activar). Actualmente solo en francés; edite `g_voice_pairs` en `voice_in.c` para otros idiomas.
+- **Comandos de voz** — archivos de comandos por idioma en `commands/`, desactivados por defecto (`VOICE_IN_COMMANDS=1`). Para añadir un idioma, cree `commands/xx.txt` — sin recompilar.
+- **Notificaciones transitorias** — aparecen y desaparecen completamente. `VOICE_IN_NOTIFY_PERSIST=1` para mantenerlas en el historial.
 - **Mayúsculas automáticas** — las oraciones se capitalizan automáticamente
 - **Inicio automático** — configurable al iniciar sesión
 
@@ -84,3 +85,9 @@ make
 Todo bajo licencia MIT: modelo Whisper (OpenAI), whisper.cpp (Georgi Gerganov) y este proyecto.
 
 Documentación completa: ver el [README principal](../README.md).
+
+---
+
+## Estilo de código
+
+Este proyecto sigue el **estilo de codificación del kernel Linux** (`Documentation/process/coding-style.rst`) con adaptaciones de Olivier Pons: llaves K&R, indentación de 4 espacios, `struct name` sin typedef, sin prefijos artificiales (`s_`, `t_`, `e_`), `return value;` sin paréntesis, comentarios kernel-doc, máximo 80 caracteres por línea. Detalles completos en el [README principal](../README.md).

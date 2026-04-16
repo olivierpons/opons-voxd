@@ -183,28 +183,64 @@ To confirm GPU is active, look for `CUDA0 total size` in the output (not `CPU to
 
 All configuration is done through environment variables (all optional):
 
-| Variable | Default | Example |
+| Variable | Default | Description |
 |---|---|---|
-| `VOICE_IN_MODEL` | `whisper.cpp/models/ggml-medium.bin` | `VOICE_IN_MODEL=whisper.cpp/models/ggml-small.bin ./voice_in` |
-| `VOICE_IN_LANGUAGE` | `fr` | `VOICE_IN_LANGUAGE=en ./voice_in` |
-| `VOICE_IN_DEVICE` | system default | `VOICE_IN_DEVICE=3 ./voice_in` |
-| `VOICE_IN_COMMANDS` | `0` (disabled) | `VOICE_IN_COMMANDS=1 ./voice_in` |
+| `VOICE_IN_MODEL` | `whisper.cpp/models/ggml-medium.bin` | Path to the GGML model file |
+| `VOICE_IN_LANGUAGE` | `fr` | Whisper language code, or `auto` |
+| `VOICE_IN_DEVICE` | system default | PortAudio device index |
+| `VOICE_IN_COMMANDS` | `0` (disabled) | Set to `1` to enable voice commands |
+| `VOICE_IN_CMDS_FILE` | `commands/<lang>.txt` | Explicit path to a commands file |
+| `VOICE_IN_NOTIFY_PERSIST` | `0` (transient) | Set to `1` to keep notifications in history |
+
+Examples:
+
+```bash
+# English dictation, voice commands enabled, persistent notifications
+VOICE_IN_LANGUAGE=en VOICE_IN_COMMANDS=1 VOICE_IN_NOTIFY_PERSIST=1 ./voice_in
+
+# Custom commands file
+VOICE_IN_COMMANDS=1 VOICE_IN_CMDS_FILE=~/my_commands.txt ./voice_in
+```
+
+### Notifications
+
+By default, notifications are **transient**: they appear for 10 seconds then vanish completely, leaving no trace in the notification center. Set `VOICE_IN_NOTIFY_PERSIST=1` if you prefer notifications to remain in the history.
 
 ### Voice Commands
 
-Voice commands are **disabled by default**. When enabled (`VOICE_IN_COMMANDS=1`), spoken French keywords are replaced with their corresponding characters:
+Voice commands are **disabled by default** to avoid unexpected replacements (e.g., saying "period" when you actually mean the word "period"). Enable them with `VOICE_IN_COMMANDS=1`.
 
-| You say | Inserted |
-|---|---|
-| "point" | `.` |
-| "virgule" | `,` |
-| "nouvelle ligne" | line break |
-| "point d'exclamation" | `!` |
-| "point d'interrogation" | `?` |
+When enabled, the program loads a command file from the `commands/` directory based on the first two characters of `VOICE_IN_LANGUAGE`. For example, `VOICE_IN_LANGUAGE=fr` loads `commands/fr.txt`, `VOICE_IN_LANGUAGE=en` loads `commands/en.txt`.
 
-> **Note:** Built-in voice commands are currently French only. To add commands in another language, edit the `g_voice_pairs` table in `voice_in.c`.
+Included command files:
 
-This avoids unexpected replacements when you actually want to write the word literally in your text.
+| File | Language | Example commands |
+|---|---|---|
+| `commands/en.txt` | English | "period" → `.`, "new line" → line break |
+| `commands/fr.txt` | French | "point" → `.`, "nouvelle ligne" → line break |
+| `commands/de.txt` | German | "punkt" → `.`, "neue zeile" → line break |
+| `commands/es.txt` | Spanish | "punto" → `.`, "nueva linea" → line break |
+| `commands/it.txt` | Italian | "punto" → `.`, "nuova riga" → line break |
+| `commands/zh.txt` | Chinese | "句号" → `。`, "换行" → line break |
+| `commands/ja.txt` | Japanese | "句点" → `。`, "改行" → line break |
+
+### Adding a New Language
+
+Create a text file `commands/xx.txt` (where `xx` is your language code):
+
+```
+# One command per line: spoken_form|replacement
+# Use \n for newline, \t for tab
+# Longer phrases must come before shorter ones
+
+new paragraph|\n\n
+new line|\n
+semicolon|;
+period|.
+comma|,
+```
+
+No recompilation needed — just set `VOICE_IN_LANGUAGE=xx` and `VOICE_IN_COMMANDS=1`.
 
 ### Available Models
 
@@ -329,8 +365,28 @@ This project uses [whisper.cpp](https://github.com/ggerganov/whisper.cpp), a C/C
 
 | File | Purpose |
 |---|---|
-| `voice_in.c` | Main source (~600 lines) |
+| `voice_in.c` | Main source (~950 lines) |
 | `Makefile` | Build system with automatic CUDA detection |
 | `launch.sh` | Launcher with rotating logs for auto-start |
+| `commands/*.txt` | Voice command files (en, fr, de, es, it, zh, ja) |
+| `screenshots/` | Tray icon screenshots |
 | `README.md` | This document |
 | `docs/` | Translated documentation |
+
+---
+
+## Coding Style
+
+This project follows the **Linux kernel coding style** (`Documentation/process/coding-style.rst`) with minor adaptations by Olivier Pons:
+
+- SPDX license identifier on line 1
+- K&R braces for control structures, new line for function bodies
+- 4-space indentation (no tabs)
+- `struct name` directly, no typedefs for structures
+- No artificial prefixes (`s_`, `t_`, `e_`)
+- `return value;` without parentheses
+- `sizeof(*ptr)` instead of `sizeof(struct type)`
+- kernel-doc `/** */` comments for non-trivial functions
+- 80 characters per line maximum, strictly enforced
+- One variable per line, `const` wherever possible
+- Early returns to reduce nesting depth

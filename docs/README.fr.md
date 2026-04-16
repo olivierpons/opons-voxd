@@ -45,7 +45,8 @@ Réalisé avec l'aide de l'intelligence artificielle.
 - **Intégration system tray** — icône discrète dans la barre des tâches
 - **Double presse-papier** — texte copié dans PRIMARY et CLIPBOARD
 - **Notifications bureau** — le texte transcrit est affiché en notification
-- **Commandes vocales** — commandes françaises intégrées pour la ponctuation et la mise en forme, désactivées par défaut (`VOICE_IN_COMMANDS=1` pour activer). Dites "point" → `.`, "virgule" → `,`, "nouvelle ligne" → saut de ligne, etc. Pour ajouter d'autres langues, modifiez la table `g_voice_pairs` dans `voice_in.c`.
+- **Commandes vocales** — fichiers de commandes par langue dans `commands/`, désactivées par défaut (`VOICE_IN_COMMANDS=1`). Ajoutez une langue en créant `commands/xx.txt`, sans recompiler.
+- **Notifications transitoires** — par défaut les notifications apparaissent puis disparaissent complètement. `VOICE_IN_NOTIFY_PERSIST=1` pour les garder dans l'historique.
 - **Majuscules automatiques** — les phrases sont capitalisées automatiquement
 - **Démarrage automatique** — configurable au login
 
@@ -142,3 +143,9 @@ make
 Tout est sous licence MIT : le modèle Whisper (OpenAI), whisper.cpp (Georgi Gerganov), et ce projet.
 
 Documentation complète : voir le [README principal](../README.md).
+
+---
+
+## Style de code
+
+Ce projet suit le **style du noyau Linux** (`Documentation/process/coding-style.rst`) avec des adaptations par Olivier Pons : accolades K&R, indentation 4 espaces, `struct name` sans typedef, pas de préfixes (`s_`, `t_`, `e_`), `return value;` sans parenthèses, commentaires kernel-doc, 80 caractères par ligne maximum. Détails complets dans le [README principal](../README.md).

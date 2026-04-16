@@ -48,7 +48,8 @@ AIの助けを借りて開発しました。
 - **軽量** ── 単一のCバイナリ（約100 KB）、Pythonは不要
 - **システムトレイ統合** ── タスクバーの目立たないアイコン
 - **デュアルクリップボード** ── PRIMARYとCLIPBOARDの両方にテキストをコピー
-- **音声コマンド** ── フランス語の句読点・書式コマンドを内蔵、デフォルトで無効（`VOICE_IN_COMMANDS=1` で有効化）。現在フランス語のみ対応。他言語は `voice_in.c` の `g_voice_pairs` テーブルを編集してください。
+- **音声コマンド** ── 言語ごとのコマンドファイル（`commands/`）、デフォルトで無効（`VOICE_IN_COMMANDS=1` で有効化）。新言語追加は `commands/xx.txt` を作成するだけ、再コンパイル不要。
+- **一時的通知** ── 通知は表示後完全に消えます。`VOICE_IN_NOTIFY_PERSIST=1` で通知履歴に残す。
 - **自動大文字化** ── 文頭が自動的に大文字になります
 - **自動起動** ── ログイン時に自動起動を設定可能
 
@@ -85,3 +86,9 @@ make
 すべてMITライセンスです：Whisperモデル（OpenAI）、whisper.cpp（Georgi Gerganov）、および本プロジェクト。
 
 詳細なドキュメントは[メインREADME](../README.md)をご覧ください。
+
+---
+
+## コーディングスタイル
+
+本プロジェクトは **Linuxカーネルコーディングスタイル**（`Documentation/process/coding-style.rst`）に従い、Olivier Pons による調整を加えています：K&R波括弧、4スペースインデント、typedef なしの `struct name`、人為的プレフィックスなし（`s_`、`t_`、`e_`）、括弧なしの `return value;`、kernel-docコメント、1行最大80文字。詳細は[メインREADME](../README.md)をご覧ください。

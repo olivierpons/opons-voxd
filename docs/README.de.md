@@ -54,7 +54,8 @@ Erstellt mit Hilfe von künstlicher Intelligenz.
 - **Leichtgewichtig** — einzelne C-Binärdatei (~100 KB), kein Python nötig
 - **System-Tray-Integration** — unauffälliges Symbol in der Taskleiste
 - **Doppelte Zwischenablage** — Text in PRIMARY und CLIPBOARD
-- **Sprachbefehle** — eingebaute französische Befehle für Satzzeichen und Formatierung, standardmäßig deaktiviert (`VOICE_IN_COMMANDS=1` zum Aktivieren). Derzeit nur Französisch; editieren Sie `g_voice_pairs` in `voice_in.c` für andere Sprachen.
+- **Sprachbefehle** — Befehlsdateien pro Sprache in `commands/`, standardmäßig deaktiviert (`VOICE_IN_COMMANDS=1`). Neue Sprache: einfach `commands/xx.txt` erstellen, keine Neukompilierung nötig.
+- **Transiente Benachrichtigungen** — erscheinen und verschwinden vollständig. `VOICE_IN_NOTIFY_PERSIST=1` um sie im Verlauf zu behalten.
 - **Automatische Großschreibung** — Sätze werden automatisch kapitalisiert
 - **Autostart** — beim Login konfigurierbar
 
@@ -91,3 +92,9 @@ make
 Alles unter MIT-Lizenz: Whisper-Modell (OpenAI), whisper.cpp (Georgi Gerganov) und dieses Projekt.
 
 Vollständige Dokumentation: siehe [Haupt-README](../README.md).
+
+---
+
+## Codierungsstil
+
+Dieses Projekt folgt dem **Linux-Kernel-Codierungsstil** (`Documentation/process/coding-style.rst`) mit Anpassungen von Olivier Pons: K&R-Klammern, 4 Leerzeichen Einrückung, `struct name` ohne Typedef, keine Präfixe (`s_`, `t_`, `e_`), `return value;` ohne Klammern, kernel-doc-Kommentare, maximal 80 Zeichen pro Zeile. Vollständige Details im [Haupt-README](../README.md).

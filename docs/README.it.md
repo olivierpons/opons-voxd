@@ -47,7 +47,8 @@ Sviluppato con l'aiuto dell'intelligenza artificiale.
 - **Leggero** — singolo binario C (~100 KB), senza Python
 - **Integrazione nel system tray** — icona discreta nella barra delle applicazioni
 - **Doppi appunti** — testo copiato in PRIMARY e CLIPBOARD
-- **Comandi vocali** — comandi francesi integrati per punteggiatura e formattazione, disabilitati per impostazione predefinita (`VOICE_IN_COMMANDS=1` per abilitare). Attualmente solo in francese; modificare `g_voice_pairs` in `voice_in.c` per altre lingue.
+- **Comandi vocali** — file di comandi per lingua in `commands/`, disabilitati di default (`VOICE_IN_COMMANDS=1`). Per aggiungere una lingua, creare `commands/xx.txt` — nessuna ricompilazione necessaria.
+- **Notifiche transitorie** — appaiono e scompaiono completamente. `VOICE_IN_NOTIFY_PERSIST=1` per mantenerle nella cronologia.
 - **Maiuscole automatiche** — le frasi vengono capitalizzate automaticamente
 - **Avvio automatico** — configurabile all'accesso
 
@@ -84,3 +85,9 @@ make
 Tutto sotto licenza MIT: modello Whisper (OpenAI), whisper.cpp (Georgi Gerganov) e questo progetto.
 
 Documentazione completa: vedere il [README principale](../README.md).
+
+---
+
+## Stile di codifica
+
+Questo progetto segue lo **stile di codifica del kernel Linux** (`Documentation/process/coding-style.rst`) con adattamenti di Olivier Pons: parentesi graffe K&R, indentazione a 4 spazi, `struct name` senza typedef, nessun prefisso artificiale (`s_`, `t_`, `e_`), `return value;` senza parentesi, commenti kernel-doc, massimo 80 caratteri per riga. Dettagli completi nel [README principale](../README.md).
