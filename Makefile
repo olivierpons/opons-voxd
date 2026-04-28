@@ -12,9 +12,9 @@
 #
 # System deps (apt):
 #     build-essential cmake pkg-config git curl
-#     libgtk-3-dev libnotify-dev libcairo2-dev libx11-dev
+#     libgtk-3-dev libnotify-dev libcairo2-dev libx11-dev libxtst-dev
 #     libportaudio2          # runtime only — header is vendored (see below)
-#     xclip xdotool libnotify-bin
+#     xclip libnotify-bin
 #     (optional) nvidia-cuda-toolkit or equivalent providing nvcc
 #
 # Note: we deliberately avoid libportaudio-dev. On multiarch Debian/Ubuntu
@@ -32,8 +32,8 @@ WHISPER_BUILD := $(WHISPER_DIR)/build
 MODEL_NAME := medium
 MODEL_FILE := $(WHISPER_DIR)/models/ggml-$(MODEL_NAME).bin
 
-PKG_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 libnotify x11)
-PKG_LIBS   := $(shell pkg-config --libs   gtk+-3.0 libnotify x11)
+PKG_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 libnotify x11 xtst)
+PKG_LIBS   := $(shell pkg-config --libs   gtk+-3.0 libnotify x11 xtst)
 
 # Vendored PortAudio header (see top-of-file note). Fetched on first build,
 # pinned to v19.7.0 — ABI-compatible with any libportaudio.so.2 in distros.

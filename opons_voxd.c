@@ -9,7 +9,7 @@
  *      stops it. Transcript is copied to PRIMARY + CLIPBOARD via xclip.
  *   2. Push-to-talk hotkey: hold the configured key combo (default
  *      ctrl+shift+space) to record, release to stop. Transcript is
- *      typed at the keyboard cursor via xdotool.
+ *      typed at the keyboard cursor via the X11 XTest extension.
  *
  * Audio is captured via PortAudio, transcribed locally with
  * whisper.cpp, and shown as a desktop notification through libnotify.
@@ -32,6 +32,7 @@
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -46,6 +47,7 @@
 #include <portaudio.h>
 #include <X11/Xlib.h>
 #include <X11/XKBlib.h>
+#include <X11/extensions/XTest.h>
 #include <X11/keysym.h>
 
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
@@ -133,7 +135,15 @@ static void request_state(enum app_state state);
 static void copy_to_selection(const char *text,
                               const char *sel);
 static void copy_to_clipboards(const char *text);
-static void type_text(const char *text);
+static int type_text(const char *text);
+static int utf8_decode(const unsigned char *s, uint32_t *cp);
+static KeySym codepoint_to_keysym(uint32_t cp);
+static int find_free_keycode(Display *dpy);
+static int keysym_index_for_keycode(Display *dpy,
+                                    int keycode,
+                                    KeySym ks);
+static int synthesize_keysym(Display *dpy, KeySym ks,
+                             int free_kc);
 static gboolean notify_cb(gpointer data);
 static void request_notify(const char *title,
                            const char *body);
@@ -311,34 +321,254 @@ static void copy_to_clipboards(const char *text)
 }
 
 /**
- * type_text - Synthesize keystrokes for @text via xdotool.
- * @text: NUL-terminated string to type at the keyboard cursor.
+ * utf8_decode - Decode a single UTF-8 sequence into a codepoint.
+ * @s: pointer to the next byte to decode.
+ * @cp: out, decoded codepoint.
  *
- * Uses --clearmodifiers so any modifier still held when the user
- * releases the push-to-talk hotkey doesn't pollute the typed output.
+ * Return: number of bytes consumed (1-4) on success, 0 on NUL,
+ * -1 on a malformed sequence.
  */
-static void type_text(const char *text)
+static int utf8_decode(const unsigned char *s, uint32_t *cp)
 {
-    pid_t pid;
-    int status;
+    if (s[0] == 0) {
+        *cp = 0;
+        return 0;
+    }
+    if (s[0] < 0x80) {
+        *cp = s[0];
+        return 1;
+    }
+    if ((s[0] & 0xE0) == 0xC0 &&
+        (s[1] & 0xC0) == 0x80) {
+        *cp = ((uint32_t)(s[0] & 0x1F) << 6) |
+              (s[1] & 0x3F);
+        return 2;
+    }
+    if ((s[0] & 0xF0) == 0xE0 &&
+        (s[1] & 0xC0) == 0x80 &&
+        (s[2] & 0xC0) == 0x80) {
+        *cp = ((uint32_t)(s[0] & 0x0F) << 12) |
+              ((uint32_t)(s[1] & 0x3F) << 6) |
+              (s[2] & 0x3F);
+        return 3;
+    }
+    if ((s[0] & 0xF8) == 0xF0 &&
+        (s[1] & 0xC0) == 0x80 &&
+        (s[2] & 0xC0) == 0x80 &&
+        (s[3] & 0xC0) == 0x80) {
+        *cp = ((uint32_t)(s[0] & 0x07) << 18) |
+              ((uint32_t)(s[1] & 0x3F) << 12) |
+              ((uint32_t)(s[2] & 0x3F) << 6) |
+              (s[3] & 0x3F);
+        return 4;
+    }
+    return -1;
+}
+
+/**
+ * codepoint_to_keysym - Map a Unicode codepoint to an X11 KeySym.
+ * @cp: Unicode codepoint.
+ *
+ * Newline and tab map to XK_Return and XK_Tab respectively. ASCII
+ * and Latin-1 (U+0020..U+00FF) map directly to themselves. Any
+ * higher codepoint uses the X11 Unicode-keysym convention
+ * (0x01000000 | codepoint).
+ *
+ * Return: the KeySym to synthesize.
+ */
+static KeySym codepoint_to_keysym(uint32_t cp)
+{
+    if (cp == '\n')
+        return XK_Return;
+    if (cp == '\t')
+        return XK_Tab;
+    if (cp < 0x100)
+        return cp;
+    return cp | 0x01000000;
+}
+
+/**
+ * find_free_keycode - Find a keycode whose every index is NoSymbol.
+ * @dpy: X display.
+ *
+ * Walks the keyboard mapping from the highest keycode downward and
+ * returns the first one that has no keysyms bound to it. This slot
+ * is later used to temporarily bind keysyms that are not on the
+ * physical layout, so XTestFakeKeyEvent can synthesize them.
+ *
+ * Return: keycode on success, -1 if no free slot is available.
+ */
+static int find_free_keycode(Display *dpy)
+{
+    int min_kc;
+    int max_kc;
+    int per;
+    KeySym *km;
+    int kc;
+    int i;
+    int found = -1;
+
+    XDisplayKeycodes(dpy, &min_kc, &max_kc);
+    km = XGetKeyboardMapping(
+        dpy, (KeyCode)min_kc, max_kc - min_kc + 1, &per);
+    if (!km)
+        return -1;
+    for (kc = max_kc; kc >= min_kc; --kc) {
+        bool free_slot = true;
+
+        for (i = 0; i < per; i++) {
+            if (km[(kc - min_kc) * per + i] != NoSymbol) {
+                free_slot = false;
+                break;
+            }
+        }
+        if (free_slot) {
+            found = kc;
+            break;
+        }
+    }
+    XFree(km);
+    return found;
+}
+
+/**
+ * keysym_index_for_keycode - Find which shift level produces @ks.
+ * @dpy: X display.
+ * @keycode: keycode to inspect.
+ * @ks: keysym to locate.
+ *
+ * Return: 0 (no modifier) or 1 (shift) if @ks is at one of those
+ * shift levels for @keycode, -1 otherwise (including AltGr-level
+ * mappings, which we don't synthesize directly).
+ */
+static int keysym_index_for_keycode(Display *dpy,
+                                    int keycode, KeySym ks)
+{
+    KeySym *km;
+    int per;
+    int found = -1;
+    int i;
+
+    km = XGetKeyboardMapping(dpy, (KeyCode)keycode, 1, &per);
+    if (!km)
+        return -1;
+    for (i = 0; i < per && i < 2; i++) {
+        if (km[i] == ks) {
+            found = i;
+            break;
+        }
+    }
+    XFree(km);
+    return found;
+}
+
+/**
+ * synthesize_keysym - Press and release the keys producing @ks.
+ * @dpy: X display.
+ * @ks: keysym to type.
+ * @free_kc: keycode reserved for runtime remapping (-1 if none).
+ *
+ * Tries the existing keyboard mapping first (no shift, then shift).
+ * Falls back to binding @ks to @free_kc via XChangeKeyboardMapping
+ * for symbols that are not on the physical layout. Used for the
+ * Latin-1 accents (é è à ç ù â ê î ô û ï ë ü ö) on layouts that
+ * don't have them, and for anything else whisper might transcribe.
+ *
+ * Return: 0 on success, -1 on failure.
+ */
+static int synthesize_keysym(Display *dpy, KeySym ks, int free_kc)
+{
+    KeyCode kc;
+    KeyCode shift_kc;
+    KeySym remap[1];
+
+    kc = XKeysymToKeycode(dpy, ks);
+    if (kc != 0) {
+        int idx = keysym_index_for_keycode(dpy, kc, ks);
+
+        if (idx == 0) {
+            XTestFakeKeyEvent(dpy, kc, True, 0);
+            XTestFakeKeyEvent(dpy, kc, False, 0);
+            XFlush(dpy);
+            return 0;
+        }
+        if (idx == 1) {
+            shift_kc = XKeysymToKeycode(dpy, XK_Shift_L);
+            if (shift_kc == 0)
+                return -1;
+            XTestFakeKeyEvent(dpy, shift_kc, True, 0);
+            XTestFakeKeyEvent(dpy, kc, True, 0);
+            XTestFakeKeyEvent(dpy, kc, False, 0);
+            XTestFakeKeyEvent(dpy, shift_kc, False, 0);
+            XFlush(dpy);
+            return 0;
+        }
+    }
+    if (free_kc <= 0)
+        return -1;
+    remap[0] = ks;
+    XChangeKeyboardMapping(dpy, free_kc, 1, remap, 1);
+    XSync(dpy, False);
+    XTestFakeKeyEvent(dpy, (KeyCode)free_kc, True, 0);
+    XTestFakeKeyEvent(dpy, (KeyCode)free_kc, False, 0);
+    XSync(dpy, False);
+    return 0;
+}
+
+/**
+ * type_text - Synthesize keystrokes for @text via XTest.
+ * @text: NUL-terminated UTF-8 string.
+ *
+ * Replaces the previous fork+exec of xdotool. Uses the same X
+ * display already opened for the push-to-talk grab, so no extra
+ * connection or process is needed. Handles ASCII, Latin-1 accents
+ * directly, and any other Unicode codepoint via temporary
+ * remapping of a free keycode.
+ *
+ * Return: 0 on success, -1 if no display is available or every
+ * character failed to type.
+ */
+static int type_text(const char *text)
+{
+    const unsigned char *p;
+    uint32_t cp;
+    int free_kc;
+    int typed = 0;
+    int failed = 0;
+    KeySym ks;
+    KeySym restore;
+    struct timespec delay;
 
     if (!text || !*text)
-        return;
-    pid = fork();
-    if (pid < 0)
-        return;
-    if (pid == 0) {
-        execlp("xdotool", "xdotool", "type",
-               "--clearmodifiers", "--delay", "1",
-               "--", text, (char *)NULL);
-        _exit(127);
+        return 0;
+    if (!g_app.xdpy)
+        return -1;
+    free_kc = find_free_keycode(g_app.xdpy);
+    delay.tv_sec = 0;
+    delay.tv_nsec = 1000000;
+    p = (const unsigned char *)text;
+    while (*p) {
+        int n = utf8_decode(p, &cp);
+
+        if (n <= 0) {
+            p++;
+            continue;
+        }
+        ks = codepoint_to_keysym(cp);
+        if (synthesize_keysym(g_app.xdpy, ks, free_kc) == 0)
+            typed++;
+        else
+            failed++;
+        p += n;
+        nanosleep(&delay, NULL);
     }
-    if (waitpid(pid, &status, 0) < 0)
-        return;
-    if (WIFEXITED(status) && WEXITSTATUS(status) == 127)
-        fprintf(stderr,
-                "type: xdotool not found "
-                "(install with: sudo apt install xdotool)\n");
+    if (free_kc > 0) {
+        restore = NoSymbol;
+        XChangeKeyboardMapping(
+            g_app.xdpy, free_kc, 1, &restore, 1);
+        XSync(g_app.xdpy, False);
+    }
+    return (typed > 0 || failed == 0) ? 0 : -1;
 }
 
 static gboolean notify_cb(gpointer data)
@@ -791,7 +1021,7 @@ static void *transcribe_thread(void *arg)
     capitalize_sentences(text);
     if (text && *text) {
         if (g_app.via_hotkey) {
-            type_text(text);
+            (void)type_text(text);
         } else {
             copy_to_clipboards(text);
             request_notify("opons-voxd", text);

@@ -38,7 +38,7 @@ Two ways to dictate, available simultaneously:
 
 1. **Hold `Ctrl+Shift+Space`** → recording starts (icon turns red)
 2. **Release the keys** → recording stops, audio is transcribed
-3. The transcribed text is **typed directly at the keyboard cursor** (via `xdotool`) into whichever window has focus
+3. The transcribed text is **typed directly at the keyboard cursor** (via the X11 XTest extension) into whichever window has focus
 
 The hotkey is configurable via `OPONS_VOXD_PTT_HOTKEY` (see [Configuration](#configuration)).
 
@@ -104,6 +104,7 @@ The hotkey is configurable via `OPONS_VOXD_PTT_HOTKEY` (see [Configuration](#con
 | libportaudio2 | 19.6+ | `dpkg -s libportaudio2 \| grep Version` | `sudo apt install libportaudio2` |
 | libcairo2-dev | 1.14+ | `pkg-config --modversion cairo` | `sudo apt install libcairo2-dev` |
 | libx11-dev | 1.6+ | `pkg-config --modversion x11` | `sudo apt install libx11-dev` |
+| libxtst-dev | 1.2+ | `pkg-config --modversion xtst` | `sudo apt install libxtst-dev` |
 
 > **Note on PortAudio:** we use the runtime package `libportaudio2` rather than `libportaudio-dev`. On multiarch Debian/Ubuntu systems running wine, installing `libportaudio-dev` can force the removal of i386 packages (`libasound2-plugins:i386`, `libjack-jackd2-0:i386`, `wine-devel`, …). The build vendors `portaudio.h` (fetched once via `curl` on first `make`) and links directly against `libportaudio.so.2`, so the dev package is never needed.
 
@@ -111,9 +112,10 @@ The hotkey is configurable via `OPONS_VOXD_PTT_HOTKEY` (see [Configuration](#con
 
 | Tool | Purpose | Install |
 |---|---|---|
-| xclip | Copy to X11 clipboards | `sudo apt install xclip` |
-| xdotool | Type transcript at cursor (push-to-talk mode) | `sudo apt install xdotool` |
+| xclip | Copy to X11 clipboards (tray mode) | `sudo apt install xclip` |
 | notify-send | Desktop notifications | `sudo apt install libnotify-bin` |
+
+Push-to-talk typing uses the XTest extension directly (provided by `libxtst6`, pulled in by `libxtst-dev` at build time). No external `xdotool` process is spawned at runtime.
 
 ### NVIDIA GPU (optional but critical for performance)
 
@@ -155,8 +157,8 @@ sudo reboot
 sudo apt update
 sudo apt install -y \
     build-essential cmake pkg-config git curl \
-    libgtk-3-dev libnotify-dev libportaudio2 libcairo2-dev libx11-dev \
-    xclip xdotool libnotify-bin
+    libgtk-3-dev libnotify-dev libportaudio2 libcairo2-dev libx11-dev libxtst-dev \
+    xclip libnotify-bin
 ```
 
 ### Step 2 — Clone this repository
@@ -240,7 +242,7 @@ OPONS_VOXD_PTT_HOTKEY=ctrl+alt+f1 ./opons-voxd
 - Modifiers: `ctrl`, `shift`, `alt`, `super`
 - Key: any X11 keysym name (`space`, `f1`, `a`, `Return`, …)
 
-If the hotkey is invalid, already grabbed by another application, or `xdotool` is not installed, push-to-talk is silently disabled and the tray icon mode keeps working normally.
+If the hotkey is invalid or already grabbed by another application, push-to-talk is silently disabled and the tray icon mode keeps working normally.
 
 ### Voice Commands
 
