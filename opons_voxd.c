@@ -40,6 +40,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -1191,13 +1192,18 @@ static void on_popup(GtkStatusIcon *icon, guint btn,
 
 /**
  * parse_hotkey - Decode "ctrl+shift+space" into modifiers + keysym.
- * @spec: hotkey description, tokens separated by '+', case-insensitive.
+ * @spec: hotkey description, tokens separated by '+'.
  * @mods: out, X11 modifier mask.
  * @ks:   out, X11 keysym.
  *
- * The last token is the key (resolved via XStringToKeysym, trying
- * the lowercase form first, then the original spelling). All other
- * tokens are modifiers: ctrl, shift, alt, super.
+ * Modifier tokens (all but the last) are matched case-insensitively
+ * against ctrl, shift, alt, super. The last token is the key, and
+ * X11 keysym names are case-sensitive (XF86Tools and Return are
+ * different from xf86tools and return), so we try the spelling
+ * as-given first, then a lowercase form, then the canonical
+ * "first letter uppercase, rest lowercase" form. That covers
+ * "Space" / "space" / "SPACE" for letters, and preserves things
+ * like "XF86Tools" exactly.
  *
  * Return: 0 on success, -1 if @spec is malformed or the key is
  * unknown.
@@ -1217,7 +1223,6 @@ static int parse_hotkey(const char *spec, unsigned int *mods,
         return -1;
     strncpy(buf, spec, sizeof(buf) - 1);
     buf[sizeof(buf) - 1] = '\0';
-    str_lower_ascii(buf);
     for (p = strtok_r(buf, "+", &save); p;
          p = strtok_r(NULL, "+", &save)) {
         while (*p == ' ' || *p == '\t')
@@ -1230,17 +1235,17 @@ static int parse_hotkey(const char *spec, unsigned int *mods,
         return -1;
     *mods = 0;
     for (i = 0; i < n_tokens - 1; i++) {
-        if (strcmp(tokens[i], "ctrl") == 0 ||
-            strcmp(tokens[i], "control") == 0)
+        if (strcasecmp(tokens[i], "ctrl") == 0 ||
+            strcasecmp(tokens[i], "control") == 0)
             *mods |= ControlMask;
-        else if (strcmp(tokens[i], "shift") == 0)
+        else if (strcasecmp(tokens[i], "shift") == 0)
             *mods |= ShiftMask;
-        else if (strcmp(tokens[i], "alt") == 0 ||
-                 strcmp(tokens[i], "mod1") == 0)
+        else if (strcasecmp(tokens[i], "alt") == 0 ||
+                 strcasecmp(tokens[i], "mod1") == 0)
             *mods |= Mod1Mask;
-        else if (strcmp(tokens[i], "super") == 0 ||
-                 strcmp(tokens[i], "win") == 0 ||
-                 strcmp(tokens[i], "mod4") == 0)
+        else if (strcasecmp(tokens[i], "super") == 0 ||
+                 strcasecmp(tokens[i], "win") == 0 ||
+                 strcasecmp(tokens[i], "mod4") == 0)
             *mods |= Mod4Mask;
         else
             return -1;
@@ -1248,12 +1253,17 @@ static int parse_hotkey(const char *spec, unsigned int *mods,
     key_token = tokens[n_tokens - 1];
     *ks = XStringToKeysym(key_token);
     if (*ks == NoSymbol && key_token[0]) {
-        char cap[64];
-        strncpy(cap, key_token, sizeof(cap) - 1);
-        cap[sizeof(cap) - 1] = '\0';
-        if (cap[0] >= 'a' && cap[0] <= 'z')
-            cap[0] = (char)(cap[0] - ('a' - 'A'));
-        *ks = XStringToKeysym(cap);
+        char alt[64];
+
+        strncpy(alt, key_token, sizeof(alt) - 1);
+        alt[sizeof(alt) - 1] = '\0';
+        str_lower_ascii(alt);
+        *ks = XStringToKeysym(alt);
+        if (*ks == NoSymbol &&
+            alt[0] >= 'a' && alt[0] <= 'z') {
+            alt[0] = (char)(alt[0] - ('a' - 'A'));
+            *ks = XStringToKeysym(alt);
+        }
     }
     if (*ks == NoSymbol)
         return -1;
@@ -1311,12 +1321,17 @@ static void ungrab_hotkey_combo(unsigned int extra)
 
 /**
  * resolve_ptt_hotkey - Read OPONS_VOXD_PTT_HOTKEY and parse it.
- * @spec: out, points to the spec string actually used (env or default).
+ * @spec: hotkey spec string (env or default).
  *
- * Stores the parsed modifier mask in g_app.ptt_mods and the resolved
- * keysym in *ks_out via parse_hotkey.
+ * Stores the parsed modifier mask in g_app.ptt_mods and the
+ * resolved keycode in g_app.ptt_keycode.
  *
- * Return: 0 on success, -1 on parse failure.
+ * Return: 0 on success, -1 if @spec is malformed (unknown modifier
+ * or unknown keysym name), -2 if the keysym is valid but is not
+ * mapped to any keycode on the current X server (typically a key
+ * the kernel/firmware sends but the active XKB layout doesn't
+ * declare; xev shows it but xmodmap -pke does not). The caller
+ * uses the distinction to print a useful diagnostic.
  */
 static int resolve_ptt_hotkey(const char *spec)
 {
@@ -1327,7 +1342,7 @@ static int resolve_ptt_hotkey(const char *spec)
     g_app.ptt_keycode =
         (unsigned int)XKeysymToKeycode(g_app.xdpy, ks);
     if (g_app.ptt_keycode == 0)
-        return -1;
+        return -2;
     return 0;
 }
 
@@ -1406,6 +1421,7 @@ static void ungrab_ptt_hotkey(void)
 static void init_hotkey(void)
 {
     const char *spec;
+    int rc;
 
     spec = getenv("OPONS_VOXD_PTT_HOTKEY");
     if (!spec || !*spec)
@@ -1416,10 +1432,21 @@ static void init_hotkey(void)
                 "push-to-talk disabled\n");
         return;
     }
-    if (resolve_ptt_hotkey(spec) != 0) {
+    rc = resolve_ptt_hotkey(spec);
+    if (rc == -1) {
         fprintf(stderr,
-                "ptt: invalid hotkey '%s', "
+                "ptt: cannot parse hotkey '%s' (unknown "
+                "modifier or unknown keysym name), "
                 "push-to-talk disabled\n", spec);
+        return;
+    }
+    if (rc == -2) {
+        fprintf(stderr,
+                "ptt: keysym in '%s' is not mapped to any "
+                "keycode on this X server. Run `xev` to see "
+                "what your key actually sends, or check "
+                "`xmodmap -pke`. Push-to-talk disabled.\n",
+                spec);
         return;
     }
     grab_ptt_hotkey();
