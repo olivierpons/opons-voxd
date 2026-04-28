@@ -2,6 +2,8 @@
 
 > Note: opons-voxd is unrelated to jakovius/voxd. The name was chosen independently — `opons` = O. Pons (author), `voxd` = vox + daemon (Latin/Unix tradition).
 
+> **⚠ Backwards compatibility intentionally broken.** This project was previously `voice_in_linux`. The rename touched the binary name, the source filename, every environment variable (`VOICE_IN_*` → `OPONS_VOXD_*`), and the runtime dependency on `xdotool` (replaced by direct XTest synthesis via `libxtst-dev`). No aliases — update your launch scripts, autostart entries, and `apt install` lines.
+
 **Lokale Sprache-zu-Text-Diktierlösung für Linux — Ihre Stimme verlässt niemals Ihren Rechner.**
 
 🌍 **Sprachen:**
@@ -58,6 +60,7 @@ Erstellt mit Hilfe von künstlicher Intelligenz.
 - **Doppelte Zwischenablage** — Text in PRIMARY und CLIPBOARD
 - **Sprachbefehle** — Befehlsdateien pro Sprache in `commands/`, standardmäßig deaktiviert (`OPONS_VOXD_COMMANDS=1`). Neue Sprache: einfach `commands/xx.txt` erstellen, keine Neukompilierung nötig.
 - **Transiente Benachrichtigungen** — erscheinen und verschwinden vollständig. `OPONS_VOXD_NOTIFY_PERSIST=1` um sie im Verlauf zu behalten.
+- **Notification mode** — `OPONS_VOXD_NOTIFY=normal|quiet|silent|off` controls success notifications (default `quiet`: bubble, no sound). Errors always show with sound, in every mode, without exception. See main README for the full table.
 - **Automatische Großschreibung** — Sätze werden automatisch kapitalisiert
 - **Autostart** — beim Login konfigurierbar
 
@@ -70,7 +73,7 @@ Erstellt mit Hilfe von künstlicher Intelligenz.
 sudo apt update
 sudo apt install -y \
     build-essential cmake pkg-config git \
-    libgtk-3-dev libnotify-dev libportaudio-dev libcairo2-dev \
+    libgtk-3-dev libnotify-dev libportaudio-dev libcairo2-dev libxtst-dev \
     xclip libnotify-bin
 
 # 2. Repository klonen
@@ -100,3 +103,8 @@ Vollständige Dokumentation: siehe [Haupt-README](../README.md).
 ## Codierungsstil
 
 Dieses Projekt folgt dem **Linux-Kernel-Codierungsstil** (`Documentation/process/coding-style.rst`) mit Anpassungen von Olivier Pons: K&R-Klammern, 4 Leerzeichen Einrückung, `struct name` ohne Typedef, keine Präfixe (`s_`, `t_`, `e_`), `return value;` ohne Klammern, kernel-doc-Kommentare, maximal 80 Zeichen pro Zeile. Vollständige Details im [Haupt-README](../README.md).
+
+## Push-to-talk hotkey
+
+The bundled `launch.sh` uses `ctrl+alt+w` (recommended on AZERTY) or `ctrl+alt+z` (recommended on QWERTY). The key sits next to `A`, so the whole combo is reachable with the left hand alone, and isn't bound by default in most desktop environments. Configure with `OPONS_VOXD_PTT_HOTKEY`. See the [main README](../README.md#push-to-talk-hotkey) for full details.
+

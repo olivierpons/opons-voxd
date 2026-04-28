@@ -2,6 +2,8 @@
 
 > Note: opons-voxd is unrelated to jakovius/voxd. The name was chosen independently — `opons` = O. Pons (author), `voxd` = vox + daemon (Latin/Unix tradition).
 
+> **⚠ Backwards compatibility intentionally broken.** This project was previously `voice_in_linux`. The rename touched the binary name, the source filename, every environment variable (`VOICE_IN_*` → `OPONS_VOXD_*`), and the runtime dependency on `xdotool` (replaced by direct XTest synthesis via `libxtst-dev`). No aliases — update your launch scripts, autostart entries, and `apt install` lines.
+
 **Linux向けローカル音声テキスト変換ツール ── 音声データがマシンの外に出ることは一切ありません。**
 
 🌍 **言語：**
@@ -52,6 +54,7 @@ AIの助けを借りて開発しました。
 - **デュアルクリップボード** ── PRIMARYとCLIPBOARDの両方にテキストをコピー
 - **音声コマンド** ── 言語ごとのコマンドファイル（`commands/`）、デフォルトで無効（`OPONS_VOXD_COMMANDS=1` で有効化）。新言語追加は `commands/xx.txt` を作成するだけ、再コンパイル不要。
 - **一時的通知** ── 通知は表示後完全に消えます。`OPONS_VOXD_NOTIFY_PERSIST=1` で通知履歴に残す。
+- **Notification mode** — `OPONS_VOXD_NOTIFY=normal|quiet|silent|off` controls success notifications (default `quiet`: bubble, no sound). Errors always show with sound, in every mode, without exception. See main README for the full table.
 - **自動大文字化** ── 文頭が自動的に大文字になります
 - **自動起動** ── ログイン時に自動起動を設定可能
 
@@ -64,7 +67,7 @@ AIの助けを借りて開発しました。
 sudo apt update
 sudo apt install -y \
     build-essential cmake pkg-config git \
-    libgtk-3-dev libnotify-dev libportaudio-dev libcairo2-dev \
+    libgtk-3-dev libnotify-dev libportaudio-dev libcairo2-dev libxtst-dev \
     xclip libnotify-bin
 
 # 2. リポジトリをクローン
@@ -94,3 +97,8 @@ make
 ## コーディングスタイル
 
 本プロジェクトは **Linuxカーネルコーディングスタイル**（`Documentation/process/coding-style.rst`）に従い、Olivier Pons による調整を加えています：K&R波括弧、4スペースインデント、typedef なしの `struct name`、人為的プレフィックスなし（`s_`、`t_`、`e_`）、括弧なしの `return value;`、kernel-docコメント、1行最大80文字。詳細は[メインREADME](../README.md)をご覧ください。
+
+## Push-to-talk hotkey
+
+The bundled `launch.sh` uses `ctrl+alt+w` (recommended on AZERTY) or `ctrl+alt+z` (recommended on QWERTY). The key sits next to `A`, so the whole combo is reachable with the left hand alone, and isn't bound by default in most desktop environments. Configure with `OPONS_VOXD_PTT_HOTKEY`. See the [main README](../README.md#push-to-talk-hotkey) for full details.
+

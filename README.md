@@ -260,12 +260,14 @@ OPONS_VOXD_PTT_HOTKEY=super+space ./opons-voxd
 OPONS_VOXD_PTT_HOTKEY=ctrl+alt+f1 ./opons-voxd
 ```
 
-**Format**: `mod+mod+...+key`, separated by `+`, case-insensitive.
+**Format**: `mod+mod+...+key`, separated by `+`. Modifier names are case-insensitive; the key name is an X11 keysym name and is case-sensitive (`XF86Tools`, `Return`, `space`, `f1`, …).
 
 - Modifiers: `ctrl`, `shift`, `alt`, `super`
-- Key: any X11 keysym name (`space`, `f1`, `a`, `Return`, …)
+- Key: any X11 keysym name returned by `xev`
 
-If the hotkey is invalid or already grabbed by another application, push-to-talk is silently disabled and the tray icon mode keeps working normally.
+**Recommended ergonomic default** (and what the bundled `launch.sh` uses): `ctrl+alt+w` on AZERTY layouts, `ctrl+alt+z` on QWERTY. The physical key sits right next to `A`, so the whole combo is reachable with the left hand alone (pinky on `Ctrl`, thumb on `Alt`, ring/middle on `W`/`Z`) without disturbing typing posture, and isn't bound by default in most desktop environments. If `ctrl+shift+space` is intercepted by your IME or terminal, `ctrl+alt+w`/`ctrl+alt+z` is a safer pick.
+
+If the hotkey is malformed (unknown modifier or unknown keysym name) or the key isn't on your active XKB layout, push-to-talk is disabled with a specific stderr message and the tray icon mode keeps working normally.
 
 ### Voice Commands
 

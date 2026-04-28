@@ -2,6 +2,8 @@
 
 > Note: opons-voxd is unrelated to jakovius/voxd. The name was chosen independently — `opons` = O. Pons (author), `voxd` = vox + daemon (Latin/Unix tradition).
 
+> **⚠ Backwards compatibility intentionally broken.** This project was previously `voice_in_linux`. The rename touched the binary name, the source filename, every environment variable (`VOICE_IN_*` → `OPONS_VOXD_*`), and the runtime dependency on `xdotool` (replaced by direct XTest synthesis via `libxtst-dev`). No aliases — update your launch scripts, autostart entries, and `apt install` lines.
+
 **Dictado de voz a texto 100% local para Linux — su voz nunca sale de su máquina.**
 
 🌍 **Idiomas:**
@@ -51,6 +53,7 @@ Desarrollado con la ayuda de inteligencia artificial.
 - **Doble portapapeles** — texto copiado en PRIMARY y CLIPBOARD
 - **Comandos de voz** — archivos de comandos por idioma en `commands/`, desactivados por defecto (`OPONS_VOXD_COMMANDS=1`). Para añadir un idioma, cree `commands/xx.txt` — sin recompilar.
 - **Notificaciones transitorias** — aparecen y desaparecen completamente. `OPONS_VOXD_NOTIFY_PERSIST=1` para mantenerlas en el historial.
+- **Notification mode** — `OPONS_VOXD_NOTIFY=normal|quiet|silent|off` controls success notifications (default `quiet`: bubble, no sound). Errors always show with sound, in every mode, without exception. See main README for the full table.
 - **Mayúsculas automáticas** — las oraciones se capitalizan automáticamente
 - **Inicio automático** — configurable al iniciar sesión
 
@@ -63,7 +66,7 @@ Desarrollado con la ayuda de inteligencia artificial.
 sudo apt update
 sudo apt install -y \
     build-essential cmake pkg-config git \
-    libgtk-3-dev libnotify-dev libportaudio-dev libcairo2-dev \
+    libgtk-3-dev libnotify-dev libportaudio-dev libcairo2-dev libxtst-dev \
     xclip libnotify-bin
 
 # 2. Clonar el repositorio
@@ -93,3 +96,8 @@ Documentación completa: ver el [README principal](../README.md).
 ## Estilo de código
 
 Este proyecto sigue el **estilo de codificación del kernel Linux** (`Documentation/process/coding-style.rst`) con adaptaciones de Olivier Pons: llaves K&R, indentación de 4 espacios, `struct name` sin typedef, sin prefijos artificiales (`s_`, `t_`, `e_`), `return value;` sin paréntesis, comentarios kernel-doc, máximo 80 caracteres por línea. Detalles completos en el [README principal](../README.md).
+
+## Push-to-talk hotkey
+
+The bundled `launch.sh` uses `ctrl+alt+w` (recommended on AZERTY) or `ctrl+alt+z` (recommended on QWERTY). The key sits next to `A`, so the whole combo is reachable with the left hand alone, and isn't bound by default in most desktop environments. Configure with `OPONS_VOXD_PTT_HOTKEY`. See the [main README](../README.md#push-to-talk-hotkey) for full details.
+

@@ -2,6 +2,8 @@
 
 > Note: opons-voxd is unrelated to jakovius/voxd. The name was chosen independently — `opons` = O. Pons (author), `voxd` = vox + daemon (Latin/Unix tradition).
 
+> **⚠ Backwards compatibility intentionally broken.** This project was previously `voice_in_linux`. The rename touched the binary name, the source filename, every environment variable (`VOICE_IN_*` → `OPONS_VOXD_*`), and the runtime dependency on `xdotool` (replaced by direct XTest synthesis via `libxtst-dev`). No aliases — update your launch scripts, autostart entries, and `apt install` lines.
+
 **Linux 本地语音转文字工具 ── 您的声音永远不会离开您的电脑。**
 
 🌍 **语言：**
@@ -52,6 +54,7 @@
 - **双剪贴板** ── 文本同时写入 PRIMARY 和 CLIPBOARD
 - **语音命令** ── 每种语言一个命令文件（`commands/` 目录），默认禁用（`OPONS_VOXD_COMMANDS=1` 启用）。添加新语言只需创建 `commands/xx.txt`，无需重新编译。
 - **瞬态通知** ── 通知出现后自动消失。设置 `OPONS_VOXD_NOTIFY_PERSIST=1` 可保留在通知历史中。
+- **Notification mode** — `OPONS_VOXD_NOTIFY=normal|quiet|silent|off` controls success notifications (default `quiet`: bubble, no sound). Errors always show with sound, in every mode, without exception. See main README for the full table.
 - **自动大写** ── 句首字母自动大写
 - **开机自启** ── 可配置为登录时自动启动
 
@@ -64,7 +67,7 @@
 sudo apt update
 sudo apt install -y \
     build-essential cmake pkg-config git \
-    libgtk-3-dev libnotify-dev libportaudio-dev libcairo2-dev \
+    libgtk-3-dev libnotify-dev libportaudio-dev libcairo2-dev libxtst-dev \
     xclip libnotify-bin
 
 # 2. 克隆项目
@@ -94,3 +97,8 @@ make
 ## 代码风格
 
 本项目遵循 **Linux 内核编码风格**（`Documentation/process/coding-style.rst`），由 Olivier Pons 进行适配：K&R 花括号风格、4 空格缩进、直接使用 `struct name`（不使用 typedef）、无人为前缀（`s_`、`t_`、`e_`）、`return value;` 不加括号、kernel-doc 注释风格、每行最多 80 个字符。完整详情请参阅[主 README](../README.md)。
+
+## Push-to-talk hotkey
+
+The bundled `launch.sh` uses `ctrl+alt+w` (recommended on AZERTY) or `ctrl+alt+z` (recommended on QWERTY). The key sits next to `A`, so the whole combo is reachable with the left hand alone, and isn't bound by default in most desktop environments. Configure with `OPONS_VOXD_PTT_HOTKEY`. See the [main README](../README.md#push-to-talk-hotkey) for full details.
+

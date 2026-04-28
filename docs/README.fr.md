@@ -2,6 +2,8 @@
 
 > Note: opons-voxd is unrelated to jakovius/voxd. The name was chosen independently — `opons` = O. Pons (author), `voxd` = vox + daemon (Latin/Unix tradition).
 
+> **⚠ Rétrocompatibilité cassée volontairement.** Ce projet s'appelait précédemment `voice_in_linux`. Le renommage touche le binaire, le fichier source, toutes les variables d'environnement (`VOICE_IN_*` → `OPONS_VOXD_*`), et la dépendance runtime à `xdotool` (remplacée par XTest direct via `libxtst-dev`). Aucun alias, aucune compatibilité ascendante — mettez à jour vos scripts de lancement, vos entrées d'autostart et vos lignes `apt install`.
+
 **Dictation vocale 100% locale pour Linux — votre voix ne quitte jamais votre machine.**
 
 🌍 **Langues :**
@@ -49,6 +51,7 @@ Réalisé avec l'aide de l'intelligence artificielle.
 - **Notifications bureau** — le texte transcrit est affiché en notification
 - **Commandes vocales** — fichiers de commandes par langue dans `commands/`, désactivées par défaut (`OPONS_VOXD_COMMANDS=1`). Ajoutez une langue en créant `commands/xx.txt`, sans recompiler.
 - **Notifications transitoires** — par défaut les notifications apparaissent puis disparaissent complètement. `OPONS_VOXD_NOTIFY_PERSIST=1` pour les garder dans l'historique.
+- **Mode de notification** — `OPONS_VOXD_NOTIFY=normal|quiet|silent|off` contrôle les notifications de succès (défaut `quiet` : bulle sans son). Les erreurs s'affichent et sonnent toujours, dans tous les modes, sans exception. Voir le README principal pour le tableau complet.
 - **Majuscules automatiques** — les phrases sont capitalisées automatiquement
 - **Démarrage automatique** — configurable au login
 
@@ -81,6 +84,7 @@ Réalisé avec l'aide de l'intelligence artificielle.
 | libnotify-dev | 0.7+ | `sudo apt install libnotify-dev` |
 | libportaudio-dev | 19.6+ | `sudo apt install libportaudio-dev` |
 | libcairo2-dev | 1.14+ | `sudo apt install libcairo2-dev` |
+| libxtst-dev | 1.2+ | `sudo apt install libxtst-dev` |
 
 ### Outils runtime (obligatoire)
 
@@ -121,7 +125,7 @@ sudo reboot
 sudo apt update
 sudo apt install -y \
     build-essential cmake pkg-config git \
-    libgtk-3-dev libnotify-dev libportaudio-dev libcairo2-dev \
+    libgtk-3-dev libnotify-dev libportaudio-dev libcairo2-dev libxtst-dev \
     xclip libnotify-bin
 
 # 2. Cloner le projet
@@ -151,3 +155,7 @@ Documentation complète : voir le [README principal](../README.md).
 ## Style de code
 
 Ce projet suit le **style du noyau Linux** (`Documentation/process/coding-style.rst`) avec des adaptations par Olivier Pons : accolades K&R, indentation 4 espaces, `struct name` sans typedef, pas de préfixes (`s_`, `t_`, `e_`), `return value;` sans parenthèses, commentaires kernel-doc, 80 caractères par ligne maximum. Détails complets dans le [README principal](../README.md).
+
+## Raccourci push-to-talk
+
+Le `launch.sh` fourni utilise `ctrl+alt+w` (recommandé sur AZERTY) ou `ctrl+alt+z` (recommandé sur QWERTY). La touche est juste à côté de `A`, donc tout le combo est atteignable avec la seule main gauche (auriculaire sur `Ctrl`, pouce sur `Alt`, annulaire/majeur sur `W`/`Z`) sans casser la posture de frappe, et n'est pris par aucun raccourci système par défaut sur la plupart des environnements de bureau. À configurer via `OPONS_VOXD_PTT_HOTKEY`. Détails complets dans le [README principal](../README.md#push-to-talk-hotkey).
