@@ -21,6 +21,10 @@
  *   OPONS_VOXD_COMMANDS        "1" to enable voice commands
  *   OPONS_VOXD_CMDS_FILE       explicit path to commands file
  *   OPONS_VOXD_NOTIFY_PERSIST  "1" to keep notifications in history
+ *   OPONS_VOXD_NOTIFY          "normal" | "quiet" (default) |
+ *                              "silent" | "off" — applies to
+ *                              success notifications only; errors
+ *                              are ALWAYS shown with sound
  *   OPONS_VOXD_PTT_HOTKEY      push-to-talk hotkey spec, e.g.
  *                            "ctrl+shift+space" (default), "super+space"
  */
@@ -86,6 +90,13 @@ enum app_state {
     STATE_PROCESSING,
 };
 
+enum notify_mode {
+    NOTIFY_NORMAL,  /* bubble + sound */
+    NOTIFY_QUIET,   /* bubble, suppressed sound (default) */
+    NOTIFY_SILENT,  /* bubble, suppressed sound, low urgency */
+    NOTIFY_OFF,     /* no bubble at all */
+};
+
 struct state_msg {
     enum app_state state;
 };
@@ -93,6 +104,7 @@ struct state_msg {
 struct notify_msg {
     char *title;
     char *body;
+    bool is_error;
 };
 
 struct voice_cmd {
@@ -114,6 +126,7 @@ struct app {
     char                    lang[16];
     bool                    commands_on;
     bool                    notify_persist;
+    enum notify_mode        notify_mode;
     struct voice_cmd        *commands;
     int                     cmd_count;
     int                     cmd_cap;
@@ -146,7 +159,8 @@ static int synthesize_keysym(Display *dpy, KeySym ks,
                              int free_kc);
 static gboolean notify_cb(gpointer data);
 static void request_notify(const char *title,
-                           const char *body);
+                           const char *body,
+                           bool is_error);
 static void process_escapes(char *s);
 static int cmd_cmp_len_desc(const void *a, const void *b);
 static void load_commands(void);
@@ -571,12 +585,33 @@ static int type_text(const char *text)
     return (typed > 0 || failed == 0) ? 0 : -1;
 }
 
+/**
+ * notify_cb - GLib idle callback that builds and shows the bubble.
+ * @data: heap-allocated struct notify_msg (we own it).
+ *
+ * Honours OPONS_VOXD_NOTIFY for non-error notifications:
+ *   normal — bubble + sound (the libnotify default)
+ *   quiet  — bubble, suppressed sound (default)
+ *   silent — bubble, suppressed sound, low urgency
+ *   off    — no bubble at all
+ *
+ * Errors are NEVER suppressed and NEVER silent. is_error=true is
+ * treated like NORMAL in every mode: bubble shown, sound played.
+ */
 static gboolean notify_cb(gpointer data)
 {
     struct notify_msg *msg = data;
     NotifyNotification *n;
     GError *err = NULL;
+    enum notify_mode mode;
 
+    mode = msg->is_error ? NOTIFY_NORMAL : g_app.notify_mode;
+    if (mode == NOTIFY_OFF) {
+        g_free(msg->title);
+        g_free(msg->body);
+        g_free(msg);
+        return G_SOURCE_REMOVE;
+    }
     n = notify_notification_new(
         msg->title, msg->body, "audio-input-microphone");
     notify_notification_set_timeout(n, NOTIFY_TIMEOUT_MS);
@@ -584,6 +619,13 @@ static gboolean notify_cb(gpointer data)
         notify_notification_set_hint(
             n, "transient",
             g_variant_new_boolean(TRUE));
+    if (mode == NOTIFY_QUIET || mode == NOTIFY_SILENT)
+        notify_notification_set_hint(
+            n, "suppress-sound",
+            g_variant_new_boolean(TRUE));
+    if (mode == NOTIFY_SILENT)
+        notify_notification_set_urgency(
+            n, NOTIFY_URGENCY_LOW);
     if (!notify_notification_show(n, &err)) {
         fprintf(stderr, "notify: %s\n",
                 err ? err->message : "unknown error");
@@ -597,13 +639,25 @@ static gboolean notify_cb(gpointer data)
     return G_SOURCE_REMOVE;
 }
 
-static void request_notify(const char *title, const char *body)
+/**
+ * request_notify - Queue a notification on the GLib main loop.
+ * @title: notification title.
+ * @body: notification body.
+ * @is_error: if true, the notification is shown unconditionally with
+ *            sound, regardless of OPONS_VOXD_NOTIFY. Use for any
+ *            failure mode (mic error, empty recording, no speech,
+ *            typing failure, etc.) so the user is never left in the
+ *            dark when something went wrong.
+ */
+static void request_notify(const char *title, const char *body,
+                           bool is_error)
 {
     struct notify_msg *msg;
 
     msg = g_new(struct notify_msg, 1);
     msg->title = g_strdup(title);
     msg->body = g_strdup(body);
+    msg->is_error = is_error;
     g_idle_add(notify_cb, msg);
 }
 
@@ -990,7 +1044,7 @@ static void *transcribe_thread(void *arg)
     (void)arg;
     n = atomic_load(&g_app.audio_len);
     if (n < MIN_AUDIO_SAMPLES) {
-        request_notify("opons-voxd", "Empty recording");
+        request_notify("opons-voxd", "Empty recording", true);
         g_app.via_hotkey = false;
         request_state(STATE_IDLE);
         return NULL;
@@ -1007,7 +1061,7 @@ static void *transcribe_thread(void *arg)
             audio_sec, elapsed, audio_sec / elapsed);
     if (!raw || !*raw) {
         free(raw);
-        request_notify("opons-voxd", "No speech detected");
+        request_notify("opons-voxd", "No speech detected", true);
         g_app.via_hotkey = false;
         request_state(STATE_IDLE);
         return NULL;
@@ -1024,10 +1078,10 @@ static void *transcribe_thread(void *arg)
             (void)type_text(text);
         } else {
             copy_to_clipboards(text);
-            request_notify("opons-voxd", text);
+            request_notify("opons-voxd", text, false);
         }
     } else {
-        request_notify("opons-voxd", "No speech detected");
+        request_notify("opons-voxd", "No speech detected", true);
     }
     free(text);
     g_app.via_hotkey = false;
@@ -1041,7 +1095,7 @@ static void rec_start(void)
 {
     if (audio_start() != 0) {
         request_notify("opons-voxd",
-                       "Mic error: cannot open stream");
+                       "Mic error: cannot open stream", true);
         return;
     }
     set_state(STATE_RECORDING);
@@ -1422,10 +1476,22 @@ static void init_device(void)
     g_app.input_device = (dev && *dev) ? atoi(dev) : -1;
 }
 
+/**
+ * init_options - Read all opt-in environment variables.
+ *
+ * OPONS_VOXD_COMMANDS         "1" enables voice commands
+ * OPONS_VOXD_NOTIFY_PERSIST   "1" keeps notifications in history
+ * OPONS_VOXD_NOTIFY           "normal" | "quiet" (default) |
+ *                             "silent" | "off" — affects success
+ *                             notifications only; errors always
+ *                             show with sound regardless.
+ */
 static void init_options(void)
 {
     const char *cmds;
     const char *persist;
+    const char *mode;
+    const char *mode_label = "quiet";
 
     cmds = getenv("OPONS_VOXD_COMMANDS");
     g_app.commands_on = (cmds && strcmp(cmds, "1") == 0);
@@ -1437,6 +1503,29 @@ static void init_options(void)
     fprintf(stderr, "notifications: %s\n",
             g_app.notify_persist
                 ? "persistent" : "transient");
+    g_app.notify_mode = NOTIFY_QUIET;
+    mode = getenv("OPONS_VOXD_NOTIFY");
+    if (mode && *mode) {
+        if (strcmp(mode, "normal") == 0) {
+            g_app.notify_mode = NOTIFY_NORMAL;
+            mode_label = "normal";
+        } else if (strcmp(mode, "quiet") == 0) {
+            g_app.notify_mode = NOTIFY_QUIET;
+            mode_label = "quiet";
+        } else if (strcmp(mode, "silent") == 0) {
+            g_app.notify_mode = NOTIFY_SILENT;
+            mode_label = "silent";
+        } else if (strcmp(mode, "off") == 0) {
+            g_app.notify_mode = NOTIFY_OFF;
+            mode_label = "off";
+        } else {
+            fprintf(stderr,
+                    "OPONS_VOXD_NOTIFY: unknown value '%s', "
+                    "falling back to 'quiet'\n", mode);
+        }
+    }
+    fprintf(stderr, "notify mode: %s "
+            "(errors always force normal)\n", mode_label);
 }
 
 static void build_menu(void)
