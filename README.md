@@ -2,6 +2,8 @@
 
 > Note: opons-voxd is unrelated to jakovius/voxd. The name was chosen independently — `opons` = O. Pons (author), `voxd` = vox + daemon (Latin/Unix tradition).
 
+> **⚠ Backwards compatibility intentionally broken.** This project was previously `voice_in_linux`. The rename touched the binary name, the source filename, every environment variable (`VOICE_IN_*` → `OPONS_VOXD_*`), and the runtime dependency on `xdotool` (replaced by direct XTest synthesis via `libxtst-dev`). No aliases, no deprecation period — update your launch scripts, autostart entries, and `apt install` lines. See [Configuration](#configuration) and [Prerequisites](#prerequisites).
+
 **Local speech-to-text dictation for Linux — your voice never leaves your machine.**
 
 🌍 **Translations:**
@@ -212,6 +214,7 @@ All configuration is done through environment variables (all optional):
 | `OPONS_VOXD_COMMANDS` | `0` (disabled) | Set to `1` to enable voice commands |
 | `OPONS_VOXD_CMDS_FILE` | `commands/<lang>.txt` | Explicit path to a commands file |
 | `OPONS_VOXD_NOTIFY_PERSIST` | `0` (transient) | Set to `1` to keep notifications in history |
+| `OPONS_VOXD_NOTIFY` | `quiet` | Notification mode: `normal`, `quiet`, `silent`, `off`. Affects success notifications only — see [Notifications](#notifications) |
 | `OPONS_VOXD_PTT_HOTKEY` | `ctrl+shift+space` | Push-to-talk hotkey (e.g. `super+space`, `ctrl+alt+f1`) |
 
 Examples:
@@ -222,11 +225,31 @@ OPONS_VOXD_LANGUAGE=en OPONS_VOXD_COMMANDS=1 OPONS_VOXD_NOTIFY_PERSIST=1 ./opons
 
 # Custom commands file
 OPONS_VOXD_COMMANDS=1 OPONS_VOXD_CMDS_FILE=~/my_commands.txt ./opons-voxd
+
+# Fully silent successes (still hear errors)
+OPONS_VOXD_NOTIFY=off ./opons-voxd
 ```
 
 ### Notifications
 
-By default, notifications are **transient**: they appear for 10 seconds then vanish completely, leaving no trace in the notification center. Set `OPONS_VOXD_NOTIFY_PERSIST=1` if you prefer notifications to remain in the history.
+Two independent knobs:
+
+**Persistence — `OPONS_VOXD_NOTIFY_PERSIST`**
+
+By default, notifications are **transient**: they appear for 10 seconds then vanish completely, leaving no trace in the notification center. Set `OPONS_VOXD_NOTIFY_PERSIST=1` to keep them in the history.
+
+**Mode — `OPONS_VOXD_NOTIFY`**
+
+Controls how success notifications (the transcript bubble) are shown. The default is `quiet`:
+
+| Value | Bubble | Sound | Urgency |
+|---|---|---|---|
+| `normal` | yes | yes | normal |
+| `quiet` *(default)* | yes | no | normal |
+| `silent` | yes | no | low |
+| `off` | no | no | — |
+
+**Errors are always shown with sound, in every mode, without exception.** A failed microphone, an empty recording, no detectable speech, or a typing failure will always produce a normal audible notification — `OPONS_VOXD_NOTIFY` does not silence those. The intent is that a quiet/silent/off setup never leaves the user wondering whether something went wrong: success goes unnoticed if you want it to, but failure cannot.
 
 ### Push-to-talk hotkey
 
