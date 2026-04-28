@@ -539,8 +539,14 @@ static int synthesize_keysym(Display *dpy, KeySym ks, int free_kc)
  * directly, and any other Unicode codepoint via temporary
  * remapping of a free keycode.
  *
- * Return: 0 on success, -1 if no display is available or every
- * character failed to type.
+ * Per-codepoint failures (e.g. a keysym that resolves nowhere even
+ * after remapping) are logged on stderr so the issue is observable,
+ * but do not abort the rest of the string. The caller relies on the
+ * return value to decide whether to fall back to the clipboard:
+ *
+ * Return: 0 if at least one character was typed (or @text was empty),
+ * -1 if @text was non-empty and every character failed (typically
+ * because @g_app.xdpy is NULL, or every keysym was unmappable).
  */
 static int type_text(const char *text)
 {
@@ -555,8 +561,12 @@ static int type_text(const char *text)
 
     if (!text || !*text)
         return 0;
-    if (!g_app.xdpy)
+    if (!g_app.xdpy) {
+        fprintf(stderr,
+                "type: no X display, cannot synthesize "
+                "keystrokes\n");
         return -1;
+    }
     free_kc = find_free_keycode(g_app.xdpy);
     delay.tv_sec = 0;
     delay.tv_nsec = 1000000;
@@ -569,10 +579,15 @@ static int type_text(const char *text)
             continue;
         }
         ks = codepoint_to_keysym(cp);
-        if (synthesize_keysym(g_app.xdpy, ks, free_kc) == 0)
+        if (synthesize_keysym(g_app.xdpy, ks, free_kc) == 0) {
             typed++;
-        else
+        } else {
             failed++;
+            fprintf(stderr,
+                    "type: cannot synthesize U+%04X "
+                    "(keysym 0x%lx)\n",
+                    (unsigned)cp, (unsigned long)ks);
+        }
         p += n;
         nanosleep(&delay, NULL);
     }
@@ -582,6 +597,10 @@ static int type_text(const char *text)
             g_app.xdpy, free_kc, 1, &restore, 1);
         XSync(g_app.xdpy, False);
     }
+    if (failed > 0)
+        fprintf(stderr,
+                "type: %d/%d codepoint(s) could not be typed\n",
+                failed, typed + failed);
     return (typed > 0 || failed == 0) ? 0 : -1;
 }
 
@@ -1075,7 +1094,20 @@ static void *transcribe_thread(void *arg)
     capitalize_sentences(text);
     if (text && *text) {
         if (g_app.via_hotkey) {
-            (void)type_text(text);
+            if (type_text(text) != 0) {
+                /*
+                 * XTest synthesis failed (no display, every keysym
+                 * unmappable, …). Don't lose the transcript: copy
+                 * it to the clipboards so the user can paste it,
+                 * and surface the failure with an error notification
+                 * (always sounds, regardless of OPONS_VOXD_NOTIFY).
+                 */
+                copy_to_clipboards(text);
+                request_notify(
+                    "opons-voxd",
+                    "Typing failed — transcript copied to clipboard",
+                    true);
+            }
         } else {
             copy_to_clipboards(text);
             request_notify("opons-voxd", text, false);
