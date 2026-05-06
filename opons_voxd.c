@@ -32,6 +32,8 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <errno.h>
+#include <limits.h>
+#include <locale.h>
 #include <math.h>
 #include <pthread.h>
 #include <stdatomic.h>
@@ -45,6 +47,8 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+#include <wchar.h>
+#include <wctype.h>
 
 #include <gtk/gtk.h>
 #include <gdk/gdkx.h>
@@ -882,27 +886,49 @@ static char *apply_voice_cmds(const char *text)
 
 /**
  * capitalize_sentences - Uppercase the first letter of each sentence.
- * @text: NUL-terminated string to modify in place.
+ * @text: NUL-terminated UTF-8 string to modify in place.
  *
- * Only handles ASCII a-z; accented UTF-8 characters at sentence
- * boundaries are left as-is.
+ * Handles ASCII a-z and any Unicode lowercase letter whose uppercase
+ * form encodes to the same number of UTF-8 bytes — which covers every
+ * accented Latin letter used in French, German, Spanish, Italian, etc.
+ * Requires setlocale(LC_CTYPE, "") to have been called at startup.
  */
 static void capitalize_sentences(char *text)
 {
     bool cap_next = true;
+    mbstate_t st_in;
     char *p;
 
     if (!text || !*text)
         return;
-    for (p = text; *p; ++p) {
-        if (cap_next && *p >= 'a' && *p <= 'z') {
-            *p = (char)(*p - ('a' - 'A'));
+    memset(&st_in, 0, sizeof(st_in));
+    p = text;
+    while (*p) {
+        wchar_t wc;
+        size_t n = mbrtowc(&wc, p, MB_CUR_MAX, &st_in);
+
+        if (n == 0 || n == (size_t)-1 || n == (size_t)-2) {
+            memset(&st_in, 0, sizeof(st_in));
+            ++p;
+            continue;
+        }
+        if (cap_next && iswlower((wint_t)wc)) {
+            char buf[MB_LEN_MAX];
+            mbstate_t st_out;
+            wchar_t up = towupper((wint_t)wc);
+            size_t m;
+
+            memset(&st_out, 0, sizeof(st_out));
+            m = wcrtomb(buf, up, &st_out);
+            if (m != (size_t)-1 && m == n)
+                memcpy(p, buf, m);
             cap_next = false;
-        } else if (*p == '.' || *p == '!' || *p == '?') {
+        } else if (wc == L'.' || wc == L'!' || wc == L'?') {
             cap_next = true;
-        } else if (*p != ' ' && *p != '\n' && *p != '\t') {
+        } else if (wc != L' ' && wc != L'\n' && wc != L'\t') {
             cap_next = false;
         }
+        p += n;
     }
 }
 
@@ -1643,6 +1669,7 @@ int main(int argc, char **argv)
 {
     PaError err;
 
+    setlocale(LC_CTYPE, "");
     if (!XInitThreads()) {
         fprintf(stderr, "XInitThreads failed\n");
         return 1;
