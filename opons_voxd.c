@@ -499,7 +499,7 @@ static int synthesize_keysym(Display *dpy, KeySym ks, int free_kc)
 {
     KeyCode kc;
     KeyCode shift_kc;
-    KeySym remap[1];
+    KeySym remap[2];
 
     kc = XKeysymToKeycode(dpy, ks);
     if (kc != 0) {
@@ -525,8 +525,17 @@ static int synthesize_keysym(Display *dpy, KeySym ks, int free_kc)
     }
     if (free_kc <= 0)
         return -1;
+    /*
+     * Pass two identical keysyms to defeat Xlib's automatic
+     * lowercase/uppercase folding: when only one alphabetic keysym
+     * is supplied, X treats the pair as (lower, upper), so pressing
+     * with no modifier yields the lowercase form even when @ks is
+     * uppercase. Setting both shift levels explicitly to @ks makes
+     * the unshifted press emit @ks verbatim.
+     */
     remap[0] = ks;
-    XChangeKeyboardMapping(dpy, free_kc, 1, remap, 1);
+    remap[1] = ks;
+    XChangeKeyboardMapping(dpy, free_kc, 1, remap, 2);
     XSync(dpy, False);
     XTestFakeKeyEvent(dpy, (KeyCode)free_kc, True, 0);
     XTestFakeKeyEvent(dpy, (KeyCode)free_kc, False, 0);
