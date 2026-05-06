@@ -826,11 +826,16 @@ static void free_commands(void)
 /**
  * str_replace_alloc - Replace every occurrence of @needle by @repl in @in.
  * @in:     source NUL-terminated string.
- * @needle: substring to match. Empty needle yields a verbatim copy.
- * @repl:   replacement string.
+ * @needle: substring to match, ASCII-case-insensitive. Empty needle
+ *          yields a verbatim copy.
+ * @repl:   replacement string (inserted verbatim).
  *
- * The output buffer is grown with realloc as needed, so no caller-side
- * assumption about the expansion ratio is required.
+ * Matching is case-insensitive on ASCII letters so voice commands can
+ * fire regardless of how Whisper capitalised the spoken phrase, while
+ * non-matched portions of @in keep their original casing — which
+ * preserves proper nouns mid-sentence. The output buffer is grown
+ * with realloc as needed, so no caller-side assumption about the
+ * expansion ratio is required.
  *
  * Return: malloc'd NUL-terminated result, or NULL on allocation failure
  *         or size_t overflow. Caller must free.
@@ -849,7 +854,7 @@ static char *str_replace_alloc(const char *in,
     if (!out)
         return NULL;
     while (*p) {
-        bool match = (nlen > 0 && strncmp(p, needle, nlen) == 0);
+        bool match = (nlen > 0 && strncasecmp(p, needle, nlen) == 0);
         size_t need = match ? rlen : 1;
 
         if (used + need + 1 > cap) {
@@ -906,7 +911,6 @@ static char *apply_voice_cmds(const char *text)
     cur = strdup(text);
     if (!cur)
         return NULL;
-    str_lower_ascii(cur);
     for (i = 0; i < g_app.cmd_count; i++) {
         char *next = str_replace_alloc(cur,
                                        g_app.commands[i].spoken,
