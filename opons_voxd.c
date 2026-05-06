@@ -193,6 +193,7 @@ static void on_popup(GtkStatusIcon *icon, guint btn,
                      guint time, gpointer data);
 static void rec_start(void);
 static void rec_stop(void);
+static void notify_critical(const char *title, const char *body);
 static int init_whisper(void);
 static void init_lang(void);
 static void init_device(void);
@@ -1573,6 +1574,34 @@ static GdkFilterReturn ptt_event_filter(GdkXEvent *xev,
 
 /* ---- initialization ---- */
 
+/**
+ * notify_critical - Show a synchronous critical desktop notification.
+ * @title: bubble title.
+ * @body:  bubble body.
+ *
+ * Used for fatal startup errors that happen before gtk_main() is
+ * running, so the asynchronous request_notify() path is not yet
+ * usable. Critical urgency keeps the bubble visible until the user
+ * dismisses it.
+ */
+static void notify_critical(const char *title, const char *body)
+{
+    NotifyNotification *n;
+    GError *err = NULL;
+
+    n = notify_notification_new(title, body, "dialog-error");
+    if (!n)
+        return;
+    notify_notification_set_urgency(n, NOTIFY_URGENCY_CRITICAL);
+    if (!notify_notification_show(n, &err)) {
+        fprintf(stderr, "notify: %s\n",
+                err ? err->message : "unknown");
+        if (err)
+            g_error_free(err);
+    }
+    g_object_unref(n);
+}
+
 static int init_whisper(void)
 {
     const char *model;
@@ -1587,8 +1616,16 @@ static int init_whisper(void)
     g_app.wctx =
         whisper_init_from_file_with_params(model, cp);
     if (!g_app.wctx) {
+        char body[512];
+
         fprintf(stderr, "failed to load model: %s\n",
                 model);
+        snprintf(body, sizeof(body),
+                 "Failed to load Whisper model:\n%s\n\n"
+                 "Check that the file exists and is readable. "
+                 "Set OPONS_VOXD_MODEL to override the path.",
+                 model);
+        notify_critical("opons-voxd: cannot start", body);
         return -1;
     }
     fprintf(stderr, "whisper ready\n");
