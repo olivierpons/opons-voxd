@@ -32,6 +32,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <locale.h>
 #include <math.h>
@@ -43,6 +44,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/file.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -194,6 +196,7 @@ static void on_popup(GtkStatusIcon *icon, guint btn,
 static void rec_start(void);
 static void rec_stop(void);
 static void notify_critical(const char *title, const char *body);
+static int acquire_instance_lock(void);
 static int init_whisper(void);
 static void init_lang(void);
 static void init_device(void);
@@ -218,6 +221,7 @@ static GdkFilterReturn ptt_event_filter(GdkXEvent *xev,
 /* ---- global state ---- */
 
 static struct app g_app;
+static int g_lock_fd = -1;
 
 /* ---- icons ---- */
 
@@ -1602,6 +1606,70 @@ static void notify_critical(const char *title, const char *body)
     g_object_unref(n);
 }
 
+/**
+ * acquire_instance_lock - Refuse to start if another instance is up.
+ *
+ * Tries to take an exclusive non-blocking flock on a per-user lock
+ * file under /tmp. The kernel releases the lock automatically when
+ * the process exits (clean or crashed), so there is no stale-lock
+ * issue and no manual cleanup. The fd is kept in @g_lock_fd for the
+ * lifetime of the process.
+ *
+ * Return: 0 on success. -1 if the lock is already held or the file
+ *         cannot be opened; in that case a critical notification has
+ *         been shown to the user.
+ */
+static int acquire_instance_lock(void)
+{
+    char path[64];
+    char body[256];
+    char pidbuf[32];
+    int pidlen;
+    int fd;
+
+    snprintf(path, sizeof(path), "/tmp/opons-voxd-%u.lock",
+             (unsigned)getuid());
+    fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+    if (fd < 0) {
+        snprintf(body, sizeof(body),
+                 "Cannot open lock file %s: %s",
+                 path, strerror(errno));
+        notify_critical("opons-voxd: cannot start", body);
+        return -1;
+    }
+    if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
+        int saved = errno;
+
+        close(fd);
+        if (saved == EWOULDBLOCK) {
+            snprintf(body, sizeof(body),
+                     "Another opons-voxd instance is already "
+                     "running. Quit it first (right-click the "
+                     "tray icon, or pkill opons-voxd) before "
+                     "starting a new one.");
+        } else {
+            snprintf(body, sizeof(body),
+                     "Cannot lock %s: %s",
+                     path, strerror(saved));
+        }
+        notify_critical("opons-voxd: cannot start", body);
+        return -1;
+    }
+    /*
+     * Best-effort: write our PID into the lock file so an admin can
+     * tell which process holds it. Failures here do not invalidate
+     * the lock, which is what protects single-instance semantics.
+     */
+    pidlen = snprintf(pidbuf, sizeof(pidbuf), "%u\n",
+                      (unsigned)getpid());
+    if (pidlen > 0 && pidlen < (int)sizeof(pidbuf)) {
+        if (ftruncate(fd, 0) == 0)
+            (void)!write(fd, pidbuf, (size_t)pidlen);
+    }
+    g_lock_fd = fd;
+    return 0;
+}
+
 static int init_whisper(void)
 {
     const char *model;
@@ -1759,6 +1827,8 @@ int main(int argc, char **argv)
         fprintf(stderr, "notify_init failed\n");
         return 1;
     }
+    if (acquire_instance_lock() != 0)
+        return 1;
     init_lang();
     init_device();
     init_options();
