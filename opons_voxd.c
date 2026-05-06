@@ -170,9 +170,9 @@ static void process_escapes(char *s);
 static int cmd_cmp_len_desc(const void *a, const void *b);
 static void load_commands(void);
 static void free_commands(void);
-static void str_replace(char *out, const char *in,
-                        const char *needle,
-                        const char *repl);
+static char *str_replace_alloc(const char *in,
+                               const char *needle,
+                               const char *repl);
 static void str_lower_ascii(char *s);
 static char *apply_voice_cmds(const char *text);
 static void capitalize_sentences(char *text);
@@ -814,24 +814,65 @@ static void free_commands(void)
 
 /* ---- text processing ---- */
 
-static void str_replace(char *out, const char *in,
-                        const char *needle, const char *repl)
+/**
+ * str_replace_alloc - Replace every occurrence of @needle by @repl in @in.
+ * @in:     source NUL-terminated string.
+ * @needle: substring to match. Empty needle yields a verbatim copy.
+ * @repl:   replacement string.
+ *
+ * The output buffer is grown with realloc as needed, so no caller-side
+ * assumption about the expansion ratio is required.
+ *
+ * Return: malloc'd NUL-terminated result, or NULL on allocation failure
+ *         or size_t overflow. Caller must free.
+ */
+static char *str_replace_alloc(const char *in,
+                               const char *needle, const char *repl)
 {
     size_t nlen = strlen(needle);
     size_t rlen = strlen(repl);
+    size_t cap = strlen(in) + 1;
+    size_t used = 0;
     const char *p = in;
-    char *o = out;
+    char *out;
 
+    out = malloc(cap);
+    if (!out)
+        return NULL;
     while (*p) {
-        if (strncmp(p, needle, nlen) == 0) {
-            memcpy(o, repl, rlen);
-            o += rlen;
+        bool match = (nlen > 0 && strncmp(p, needle, nlen) == 0);
+        size_t need = match ? rlen : 1;
+
+        if (used + need + 1 > cap) {
+            size_t want = used + need + 1;
+            size_t ncap;
+            char *tmp;
+
+            if (want < used || cap > SIZE_MAX / 2) {
+                free(out);
+                return NULL;
+            }
+            ncap = cap * 2;
+            if (ncap < want)
+                ncap = want;
+            tmp = realloc(out, ncap);
+            if (!tmp) {
+                free(out);
+                return NULL;
+            }
+            out = tmp;
+            cap = ncap;
+        }
+        if (match) {
+            memcpy(out + used, repl, rlen);
+            used += rlen;
             p += nlen;
         } else {
-            *o++ = *p++;
+            out[used++] = *p++;
         }
     }
-    *o = '\0';
+    out[used] = '\0';
+    return out;
 }
 
 static void str_lower_ascii(char *s)
@@ -850,38 +891,26 @@ static void str_lower_ascii(char *s)
  */
 static char *apply_voice_cmds(const char *text)
 {
-    size_t n = strlen(text);
-    char *buf_a;
-    char *buf_b;
-    char *src;
-    char *dst;
-    char *tmp;
-    char *result;
+    char *cur;
     int i;
 
-    buf_a = malloc(n * 4 + 16);
-    buf_b = malloc(n * 4 + 16);
-    if (!buf_a || !buf_b) {
-        free(buf_a);
-        free(buf_b);
-        return strdup(text);
-    }
-    strcpy(buf_a, text);
-    str_lower_ascii(buf_a);
-    src = buf_a;
-    dst = buf_b;
+    cur = strdup(text);
+    if (!cur)
+        return NULL;
+    str_lower_ascii(cur);
     for (i = 0; i < g_app.cmd_count; i++) {
-        str_replace(dst, src,
-                    g_app.commands[i].spoken,
-                    g_app.commands[i].replacement);
-        tmp = src;
-        src = dst;
-        dst = tmp;
+        char *next = str_replace_alloc(cur,
+                                       g_app.commands[i].spoken,
+                                       g_app.commands[i].replacement);
+
+        if (!next) {
+            free(cur);
+            return strdup(text);
+        }
+        free(cur);
+        cur = next;
     }
-    result = strdup(src);
-    free(buf_a);
-    free(buf_b);
-    return result;
+    return cur;
 }
 
 /**
