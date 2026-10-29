@@ -67,6 +67,7 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/file.h>
+#include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -92,6 +93,9 @@
 #ifndef M_PI
 #define M_PI                3.14159265358979323846
 #endif
+#ifndef M_SQRT1_2
+#define M_SQRT1_2           0.70710678118654752440
+#endif
 
 #define SAMPLE_RATE         16000
 #define NUM_CHANNELS        1
@@ -115,10 +119,25 @@
 
 /* ---- types ---- */
 
+/*
+ * STATE_UNLOADED: Whisper contexts freed (GPU memory released),
+ * dictation refused until reloaded. STATE_LOADING: a worker thread
+ * is re-creating the contexts. Every other state implies the models
+ * are loaded.
+ */
 enum app_state {
     STATE_IDLE,
     STATE_RECORDING,
     STATE_PROCESSING,
+    STATE_UNLOADED,
+    STATE_LOADING,
+};
+
+enum icon_style {
+    ICON_RING,          /* outline circle */
+    ICON_DISC,          /* filled circle */
+    ICON_SLASHED_RING,  /* outline circle crossed by a diagonal bar */
+    ICON_ARC,           /* three-quarter outline circle */
 };
 
 enum notify_mode {
@@ -130,6 +149,12 @@ enum notify_mode {
 
 struct state_msg {
     enum app_state state;
+};
+
+/* Hand-off from reload_thread to reload_done_cb. */
+struct reload_msg {
+    int reply_fd;   /* control client awaiting the outcome, or -1 */
+    int rc;         /* load_models() result */
 };
 
 struct notify_msg {
@@ -157,7 +182,11 @@ struct app {
     GdkPixbuf               *icon_idle;
     GdkPixbuf               *icon_recording;
     GdkPixbuf               *icon_processing;
+    GdkPixbuf               *icon_unloaded;
+    GdkPixbuf               *icon_loading;
     GtkWidget               *menu;
+    GtkWidget               *menu_unload;
+    GtkWidget               *menu_reload;
     PaStream                *stream;
     int                     input_device;
     float                   *audio_buf;
@@ -179,12 +208,13 @@ struct app {
     bool                    via_hotkey;
     bool                    translate_active;
     unsigned int            active_ptt_keycode;
+    bool                    ptt_refused;
 };
 
 /* ---- static prototypes ---- */
 
 static GdkPixbuf *make_icon(double r, double g, double b,
-                            gboolean filled);
+                            enum icon_style style);
 static void set_state(enum app_state state);
 static gboolean set_state_cb(gpointer data);
 static void request_state(enum app_state state);
@@ -225,8 +255,18 @@ static char *run_whisper(const float *samples,
                          size_t n_samples,
                          bool translate);
 static void *transcribe_thread(void *arg);
+static void control_reply(int fd, bool ok, const char *msg);
+static int load_models(void);
+static void free_models(void);
+static void models_unload(int reply_fd);
+static gboolean reload_done_cb(gpointer data);
+static void *reload_thread(void *arg);
+static void models_reload(int reply_fd);
+static void notify_models_not_ready(enum app_state s);
 static void on_activate(GtkStatusIcon *icon, gpointer data);
 static void on_toggle(GtkMenuItem *item, gpointer data);
+static void on_unload(GtkMenuItem *item, gpointer data);
+static void on_reload(GtkMenuItem *item, gpointer data);
 static void on_quit(GtkMenuItem *item, gpointer data);
 static void on_popup(GtkStatusIcon *icon, guint btn,
                      guint time, gpointer data);
@@ -234,6 +274,7 @@ static void rec_start(void);
 static void rec_stop(void);
 static void notify_critical(const char *title, const char *body);
 static int acquire_instance_lock(void);
+static const char *main_model_path(void);
 static int init_whisper(void);
 static void init_whisper_translate(void);
 static void init_lang(void);
@@ -271,29 +312,39 @@ static int g_lock_fd = -1;
  * @r: red component (0.0 to 1.0).
  * @g: green component (0.0 to 1.0).
  * @b: blue component (0.0 to 1.0).
- * @filled: TRUE for solid fill, FALSE for outline only.
+ * @style: shape drawn, see enum icon_style.
  *
  * Return: newly allocated GdkPixbuf (caller owns the ref).
  */
 static GdkPixbuf *make_icon(double r, double g, double b,
-                            gboolean filled)
+                            enum icon_style style)
 {
     cairo_surface_t *surface;
     cairo_t *cr;
     GdkPixbuf *pb;
     double cx = ICON_PX / 2.0;
     double radius = cx - 2.0;
+    double d = radius * M_SQRT1_2;
 
     surface = cairo_image_surface_create(
         CAIRO_FORMAT_ARGB32, ICON_PX, ICON_PX);
     cr = cairo_create(surface);
     cairo_set_source_rgba(cr, r, g, b, 1.0);
     cairo_set_line_width(cr, 2.5);
-    cairo_arc(cr, cx, cx, radius, 0, 2 * M_PI);
-    if (filled)
+    if (style == ICON_ARC)
+        cairo_arc(cr, cx, cx, radius, -M_PI / 2, M_PI);
+    else
+        cairo_arc(cr, cx, cx, radius, 0, 2 * M_PI);
+    if (style == ICON_DISC)
         cairo_fill(cr);
     else
         cairo_stroke(cr);
+    if (style == ICON_SLASHED_RING) {
+        cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+        cairo_move_to(cr, cx - d, cx + d);
+        cairo_line_to(cr, cx + d, cx - d);
+        cairo_stroke(cr);
+    }
     cairo_destroy(cr);
     pb = gdk_pixbuf_get_from_surface(
         surface, 0, 0, ICON_PX, ICON_PX);
@@ -303,17 +354,33 @@ static GdkPixbuf *make_icon(double r, double g, double b,
 
 /* ---- state management ---- */
 
+/*
+ * Main thread only: also updates the tray icon, tooltip and the
+ * sensitivity of the unload/reload menu items.
+ */
 static void set_state(enum app_state state)
 {
     GdkPixbuf *pb;
+    const char *tip = "opons-voxd";
 
     atomic_store(&g_app.state, state);
     pb = g_app.icon_idle;
-    if (state == STATE_RECORDING)
+    if (state == STATE_RECORDING) {
         pb = g_app.icon_recording;
-    else if (state == STATE_PROCESSING)
+    } else if (state == STATE_PROCESSING) {
         pb = g_app.icon_processing;
+    } else if (state == STATE_UNLOADED) {
+        pb = g_app.icon_unloaded;
+        tip = "opons-voxd: models unloaded, GPU memory freed "
+              "(dictation disabled)";
+    } else if (state == STATE_LOADING) {
+        pb = g_app.icon_loading;
+        tip = "opons-voxd: reloading models...";
+    }
     gtk_status_icon_set_from_pixbuf(g_app.status_icon, pb);
+    gtk_status_icon_set_tooltip_text(g_app.status_icon, tip);
+    gtk_widget_set_sensitive(g_app.menu_unload, state == STATE_IDLE);
+    gtk_widget_set_sensitive(g_app.menu_reload, state == STATE_UNLOADED);
 }
 
 static gboolean set_state_cb(gpointer data)
@@ -1275,6 +1342,192 @@ static void rec_stop(void)
     pthread_detach(tid);
 }
 
+/* ---- model unload / reload ---- */
+
+/**
+ * control_reply - Answer a control client with one line, then close it.
+ * @fd: client socket, or -1 when the request came from the tray menu
+ *      (nothing is sent).
+ * @ok: sent as the leading word, "ok" or "err".
+ * @msg: explanation meant to be read by a human or an AI agent.
+ *
+ * MSG_NOSIGNAL: a client that already hung up must not kill the
+ * daemon with SIGPIPE.
+ */
+static void control_reply(int fd, bool ok, const char *msg)
+{
+    char line[512];
+    int len;
+
+    if (fd < 0)
+        return;
+    len = snprintf(line, sizeof(line), "%s %s\n",
+                   ok ? "ok" : "err", msg);
+    if (len > 0) {
+        if ((size_t)len >= sizeof(line))
+            len = (int)sizeof(line) - 1;
+        (void)!send(fd, line, (size_t)len, MSG_NOSIGNAL);
+    }
+    close(fd);
+}
+
+/**
+ * load_models - Create the main and translate Whisper contexts.
+ *
+ * Safe to call from a worker thread: touches nothing but
+ * g_app.wctx / g_app.wctx_translate and stderr.
+ *
+ * Return: 0 on success, -1 if the main model failed to load (both
+ * contexts are then NULL).
+ */
+static int load_models(void)
+{
+    if (init_whisper() != 0)
+        return -1;
+    init_whisper_translate();
+    return 0;
+}
+
+static void free_models(void)
+{
+    if (g_app.wctx_translate && g_app.wctx_translate != g_app.wctx)
+        whisper_free(g_app.wctx_translate);
+    if (g_app.wctx)
+        whisper_free(g_app.wctx);
+    g_app.wctx = NULL;
+    g_app.wctx_translate = NULL;
+}
+
+/**
+ * models_unload - Free both Whisper contexts to release GPU memory.
+ * @reply_fd: control client to answer, or -1.
+ *
+ * Main thread only. Refused while recording or transcribing (the
+ * transcribe thread uses the contexts until it queues STATE_IDLE)
+ * and while a reload is running. Idempotent once unloaded.
+ */
+static void models_unload(int reply_fd)
+{
+    switch (atomic_load(&g_app.state)) {
+    case STATE_UNLOADED:
+        control_reply(reply_fd, true,
+                      "already unloaded: Whisper models are not in "
+                      "GPU memory, dictation is disabled");
+        return;
+    case STATE_LOADING:
+        control_reply(reply_fd, false,
+                      "busy: models are being reloaded, retry once "
+                      "the reload has finished");
+        return;
+    case STATE_RECORDING:
+    case STATE_PROCESSING:
+        control_reply(reply_fd, false,
+                      "busy: a dictation is being recorded or "
+                      "transcribed, retry in a few seconds");
+        return;
+    case STATE_IDLE:
+        break;
+    }
+    free_models();
+    set_state(STATE_UNLOADED);
+    fprintf(stderr, "models: unloaded, GPU memory released\n");
+    request_notify("opons-voxd",
+                   "Models unloaded, GPU memory freed. Dictation is "
+                   "disabled until they are reloaded.", false);
+    control_reply(reply_fd, true,
+                  "unloaded: Whisper models freed from GPU memory, "
+                  "dictation disabled until reload");
+}
+
+static gboolean reload_done_cb(gpointer data)
+{
+    struct reload_msg *msg = data;
+
+    if (msg->rc == 0) {
+        set_state(STATE_IDLE);
+        fprintf(stderr, "models: reloaded\n");
+        request_notify("opons-voxd",
+                       "Models reloaded, dictation enabled.", false);
+        control_reply(msg->reply_fd, true,
+                      "loaded: Whisper models are back in GPU "
+                      "memory, dictation enabled");
+    } else {
+        set_state(STATE_UNLOADED);
+        request_notify("opons-voxd",
+                       "Failed to reload the Whisper models (see the "
+                       "log). Dictation stays disabled.", true);
+        control_reply(msg->reply_fd, false,
+                      "reload failed: the Whisper model could not be "
+                      "loaded (not enough free GPU memory?), models "
+                      "stay unloaded");
+    }
+    g_free(msg);
+    return G_SOURCE_REMOVE;
+}
+
+static void *reload_thread(void *arg)
+{
+    struct reload_msg *msg = arg;
+
+    msg->rc = load_models();
+    g_idle_add(reload_done_cb, msg);
+    return NULL;
+}
+
+/**
+ * models_reload - Recreate the Whisper contexts on a worker thread.
+ * @reply_fd: control client to answer once loading has finished
+ *            (it stays open until then), or -1.
+ *
+ * Main thread only. Loading takes seconds, so it runs off the GTK
+ * loop under STATE_LOADING. Idempotent while the models are loaded.
+ */
+static void models_reload(int reply_fd)
+{
+    struct reload_msg *msg;
+    pthread_t tid;
+    enum app_state s;
+
+    s = atomic_load(&g_app.state);
+    if (s == STATE_LOADING) {
+        control_reply(reply_fd, false,
+                      "busy: a reload is already in progress");
+        return;
+    }
+    if (s != STATE_UNLOADED) {
+        control_reply(reply_fd, true,
+                      "already loaded: Whisper models are in GPU "
+                      "memory, dictation enabled");
+        return;
+    }
+    msg = g_new(struct reload_msg, 1);
+    msg->reply_fd = reply_fd;
+    msg->rc = -1;
+    set_state(STATE_LOADING);
+    if (pthread_create(&tid, NULL, reload_thread, msg) != 0) {
+        perror("pthread_create");
+        set_state(STATE_UNLOADED);
+        control_reply(reply_fd, false,
+                      "reload failed: cannot start worker thread");
+        g_free(msg);
+        return;
+    }
+    pthread_detach(tid);
+}
+
+/* Explain why a dictation request is refused (error = always shown). */
+static void notify_models_not_ready(enum app_state s)
+{
+    request_notify("opons-voxd",
+                   s == STATE_LOADING
+                       ? "Models are reloading, try again in a few "
+                         "seconds."
+                       : "Models unloaded to free GPU memory. "
+                         "Right-click the tray icon > Reload models "
+                         "to dictate again.",
+                   true);
+}
+
 /* ---- GTK tray handlers ---- */
 
 static void on_activate(GtkStatusIcon *icon, gpointer data)
@@ -1288,6 +1541,8 @@ static void on_activate(GtkStatusIcon *icon, gpointer data)
         rec_start();
     else if (s == STATE_RECORDING)
         rec_stop();
+    else if (s == STATE_UNLOADED || s == STATE_LOADING)
+        notify_models_not_ready(s);
 }
 
 static void on_toggle(GtkMenuItem *item, gpointer data)
@@ -1295,6 +1550,20 @@ static void on_toggle(GtkMenuItem *item, gpointer data)
     (void)item;
     (void)data;
     on_activate(NULL, NULL);
+}
+
+static void on_unload(GtkMenuItem *item, gpointer data)
+{
+    (void)item;
+    (void)data;
+    models_unload(-1);
+}
+
+static void on_reload(GtkMenuItem *item, gpointer data)
+{
+    (void)item;
+    (void)data;
+    models_reload(-1);
 }
 
 static void on_quit(GtkMenuItem *item, gpointer data)
@@ -1682,8 +1951,14 @@ static GdkFilterReturn ptt_event_filter(GdkXEvent *xev,
             g_app.translate_active = is_translate;
             g_app.active_ptt_keycode = e->xkey.keycode;
             rec_start();
+        } else if ((s == STATE_UNLOADED || s == STATE_LOADING) &&
+                   !g_app.ptt_refused) {
+            /* Auto-repeat resends KeyPress while held: notify once. */
+            g_app.ptt_refused = true;
+            notify_models_not_ready(s);
         }
     } else {
+        g_app.ptt_refused = false;
         if (s == STATE_RECORDING && g_app.via_hotkey &&
             e->xkey.keycode == g_app.active_ptt_keycode)
             rec_stop();
@@ -1785,30 +2060,30 @@ static int acquire_instance_lock(void)
     return 0;
 }
 
+static const char *main_model_path(void)
+{
+    const char *model;
+
+    model = getenv("OPONS_VOXD_MODEL");
+    if (!model || !*model)
+        model = DEFAULT_MODEL;
+    return model;
+}
+
 static int init_whisper(void)
 {
     const char *model;
     struct whisper_context_params cp;
 
-    model = getenv("OPONS_VOXD_MODEL");
-    if (!model || !*model)
-        model = DEFAULT_MODEL;
+    model = main_model_path();
     fprintf(stderr, "loading whisper model: %s\n", model);
     cp = whisper_context_default_params();
     cp.use_gpu = true;
     g_app.wctx =
         whisper_init_from_file_with_params(model, cp);
     if (!g_app.wctx) {
-        char body[512];
-
         fprintf(stderr, "failed to load model: %s\n",
                 model);
-        snprintf(body, sizeof(body),
-                 "Failed to load Whisper model:\n%s\n\n"
-                 "Check that the file exists and is readable. "
-                 "Set OPONS_VOXD_MODEL to override the path.",
-                 model);
-        notify_critical("opons-voxd: cannot start", body);
         return -1;
     }
     fprintf(stderr, "whisper ready\n");
@@ -1837,9 +2112,7 @@ static void init_whisper_translate(void)
     model = getenv("OPONS_VOXD_TRANSLATE_MODEL");
     if (!model || !*model)
         model = DEFAULT_TRANSLATE_MODEL;
-    main_model = getenv("OPONS_VOXD_MODEL");
-    if (!main_model || !*main_model)
-        main_model = DEFAULT_MODEL;
+    main_model = main_model_path();
     if (strcmp(model, main_model) == 0) {
         g_app.wctx_translate = g_app.wctx;
         return;
@@ -1939,26 +2212,43 @@ static void build_menu(void)
     g_app.menu = gtk_menu_new();
     toggle = gtk_menu_item_new_with_label(
         "Toggle recording");
+    g_app.menu_unload = gtk_menu_item_new_with_label(
+        "Unload models (free GPU memory)");
+    g_app.menu_reload = gtk_menu_item_new_with_label(
+        "Reload models");
     quit = gtk_menu_item_new_with_label("Quit");
     g_signal_connect(toggle, "activate",
                      G_CALLBACK(on_toggle), NULL);
+    g_signal_connect(g_app.menu_unload, "activate",
+                     G_CALLBACK(on_unload), NULL);
+    g_signal_connect(g_app.menu_reload, "activate",
+                     G_CALLBACK(on_reload), NULL);
     g_signal_connect(quit, "activate",
                      G_CALLBACK(on_quit), NULL);
     gtk_menu_shell_append(
         GTK_MENU_SHELL(g_app.menu), toggle);
     gtk_menu_shell_append(
+        GTK_MENU_SHELL(g_app.menu), g_app.menu_unload);
+    gtk_menu_shell_append(
+        GTK_MENU_SHELL(g_app.menu), g_app.menu_reload);
+    gtk_menu_shell_append(
         GTK_MENU_SHELL(g_app.menu), quit);
+    gtk_widget_set_sensitive(g_app.menu_reload, FALSE);
     gtk_widget_show_all(g_app.menu);
 }
 
 static void build_tray(void)
 {
     g_app.icon_idle =
-        make_icon(1.0, 1.0, 1.0, FALSE);
+        make_icon(1.0, 1.0, 1.0, ICON_RING);
     g_app.icon_recording =
-        make_icon(0.94, 0.33, 0.31, TRUE);
+        make_icon(0.94, 0.33, 0.31, ICON_DISC);
     g_app.icon_processing =
-        make_icon(1.0, 0.65, 0.15, TRUE);
+        make_icon(1.0, 0.65, 0.15, ICON_DISC);
+    g_app.icon_unloaded =
+        make_icon(0.55, 0.55, 0.55, ICON_SLASHED_RING);
+    g_app.icon_loading =
+        make_icon(0.35, 0.7, 1.0, ICON_ARC);
     g_app.status_icon =
         gtk_status_icon_new_from_pixbuf(g_app.icon_idle);
     gtk_status_icon_set_tooltip_text(
@@ -2007,11 +2297,18 @@ int main(int argc, char **argv)
                 Pa_GetErrorText(err));
         return 1;
     }
-    if (init_whisper() != 0) {
+    if (load_models() != 0) {
+        char body[512];
+
+        snprintf(body, sizeof(body),
+                 "Failed to load Whisper model:\n%s\n\n"
+                 "Check that the file exists and is readable. "
+                 "Set OPONS_VOXD_MODEL to override the path.",
+                 main_model_path());
+        notify_critical("opons-voxd: cannot start", body);
         Pa_Terminate();
         return 1;
     }
-    init_whisper_translate();
     build_menu();
     build_tray();
     init_hotkey();
@@ -2022,9 +2319,9 @@ int main(int argc, char **argv)
         audio_stop();
     free_hotkey();
     Pa_Terminate();
-    if (g_app.wctx_translate && g_app.wctx_translate != g_app.wctx)
-        whisper_free(g_app.wctx_translate);
-    whisper_free(g_app.wctx);
+    /* A reload thread may still be writing the contexts. */
+    if (atomic_load(&g_app.state) != STATE_LOADING)
+        free_models();
     free_commands();
     notify_uninit();
     free(g_app.audio_buf);
@@ -2032,5 +2329,7 @@ int main(int argc, char **argv)
     g_object_unref(g_app.icon_idle);
     g_object_unref(g_app.icon_recording);
     g_object_unref(g_app.icon_processing);
+    g_object_unref(g_app.icon_unloaded);
+    g_object_unref(g_app.icon_loading);
     return 0;
 }
