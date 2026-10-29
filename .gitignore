@@ -1,5 +1,6 @@
-# Compiled binary
+# Compiled binaries
 opons-voxd
+opons-voxd-mcp
 
 # whisper.cpp (cloned at build time via make setup)
 whisper.cpp/

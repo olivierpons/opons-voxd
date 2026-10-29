@@ -315,7 +315,7 @@ While unloaded, clicking the icon or pressing a push-to-talk hotkey shows an err
 
 **By hand:** right-click the tray icon > *Unload models (free GPU memory)*, then *Reload models*.
 
-**From an AI agent (MCP):** start the daemon with `-m` / `--mcp` (off by default; add it to the `exec` line of `launch.sh` to keep it on). It then listens on a Unix socket only you can access (`/run/user/<uid>/opons-voxd.sock`, mode 0600). The same binary run with `-s` / `--mcp-stdio` is a [Model Context Protocol](https://modelcontextprotocol.io) server over stdio that forwards to that socket, exposing three tools:
+**From an AI agent (MCP):** start the daemon with `-m` / `--mcp` (off by default; add it to the `exec` line of `launch.sh` to keep it on). It then listens on a Unix socket only you can access (`/run/user/<uid>/opons-voxd.sock`, mode 0600). `make` also builds `opons-voxd-mcp`, a [Model Context Protocol](https://modelcontextprotocol.io) server over stdio that forwards to that socket. It links against libc only, so each copy an AI client keeps running costs about 1.5 MB of RAM. It exposes three tools:
 
 | Tool | Effect |
 |---|---|
@@ -323,16 +323,16 @@ While unloaded, clicking the icon or pressing a push-to-talk hotkey shows an err
 | `reload_models` | loads them back, returns once they are ready |
 | `get_status` | `loaded`, `unloaded` or `loading` |
 
-Register it in any MCP client as a stdio server whose command is the absolute path of the binary with the `--mcp-stdio` argument. With Claude Code:
+Register it in any MCP client as a stdio server whose command is the absolute path of `opons-voxd-mcp`, without arguments. With Claude Code:
 
 ```bash
-claude mcp add --scope user opons-voxd -- /path/to/opons-voxd/opons-voxd --mcp-stdio
+claude mcp add --scope user opons-voxd -- /path/to/opons-voxd/opons-voxd-mcp
 ```
 
 Most other clients (Claude Desktop, Cursor, LM Studio...) use the same JSON shape:
 
 ```json
-{ "mcpServers": { "opons-voxd": { "command": "/path/to/opons-voxd/opons-voxd", "args": ["--mcp-stdio"] } } }
+{ "mcpServers": { "opons-voxd": { "command": "/path/to/opons-voxd/opons-voxd-mcp" } } }
 ```
 
 Then ask the agent to free the GPU before its heavy work and to reload the models afterwards. About 180 MB stays allocated after unloading: that is the CUDA context of the process, released only when opons-voxd exits.
@@ -496,7 +496,9 @@ This project uses [whisper.cpp](https://github.com/ggerganov/whisper.cpp), a C/C
 
 | File | Purpose |
 |---|---|
-| `opons_voxd.c` | Main source (~950 lines) |
+| `opons_voxd.c` | Daemon source (tray, audio, Whisper, hotkeys, control socket) |
+| `opons_voxd_mcp.c` | MCP server (`opons-voxd-mcp`), libc only |
+| `voxd_control.h` | Control socket path and protocol shared by both |
 | `Makefile` | Build system with automatic CUDA detection |
 | `launch.sh` | Launcher with rotating logs for auto-start |
 | `commands/*.txt` | Voice command files (en, fr, de, es, it, zh, ja) |

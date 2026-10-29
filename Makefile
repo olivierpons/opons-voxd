@@ -2,7 +2,7 @@
 #
 # Usage:
 #     make setup      # clone whisper.cpp, build it, download the model
-#     make            # build the opons-voxd binary
+#     make            # build the opons-voxd and opons-voxd-mcp binaries
 #     make run        # launch it
 #     make clean      # remove opons-voxd binary
 #     make distclean  # also remove whisper.cpp
@@ -81,14 +81,14 @@ endif
 
 # ---- targets ----
 
-all: opons-voxd
+all: opons-voxd opons-voxd-mcp
 
 $(PA_HEADER):
 	@mkdir -p $(PA_VENDOR_DIR)
 	@echo "[fetch] portaudio.h ($(PA_HEADER_URL))"
 	curl -fsSL -o $@ $(PA_HEADER_URL)
 
-opons-voxd: opons_voxd.c $(PA_HEADER)
+opons-voxd: opons_voxd.c voxd_control.h $(PA_HEADER)
 ifeq ($(HAS_CUDA),1)
 	@echo "[build] CUDA detected — linking with GPU support"
 else
@@ -99,6 +99,11 @@ endif
 	    -Wl,--start-group $(WHISPER_LIBS) -Wl,--end-group \
 	    $(PKG_LIBS) $(PA_LIBS) $(CUDA_LIBS) $(LDFLAGS) \
 	    -lm -lpthread -lstdc++ -fopenmp
+
+# MCP server spawned by AI clients: libc only, so each running copy
+# stays around a megabyte of RAM.
+opons-voxd-mcp: opons_voxd_mcp.c voxd_control.h
+	$(CC) $(CFLAGS) opons_voxd_mcp.c -o $@
 
 setup:
 	@if [ ! -d "$(WHISPER_DIR)" ]; then \
@@ -130,7 +135,7 @@ run: opons-voxd
 	OPONS_VOXD_MODEL=$(MODEL_FILE) ./opons-voxd
 
 clean:
-	rm -f opons-voxd
+	rm -f opons-voxd opons-voxd-mcp
 
 distclean: clean
 	rm -rf $(WHISPER_DIR) vendor
