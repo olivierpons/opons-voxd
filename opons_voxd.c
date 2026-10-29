@@ -55,6 +55,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <getopt.h>
 #include <limits.h>
 #include <locale.h>
 #include <math.h>
@@ -68,13 +69,17 @@
 #include <strings.h>
 #include <sys/file.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/time.h>
 #include <sys/types.h>
+#include <sys/un.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 #include <wchar.h>
 #include <wctype.h>
 
+#include <glib-unix.h>
 #include <gtk/gtk.h>
 #include <gdk/gdkx.h>
 #include <libnotify/notify.h>
@@ -209,6 +214,8 @@ struct app {
     bool                    translate_active;
     unsigned int            active_ptt_keycode;
     bool                    ptt_refused;
+    int                     control_fd;
+    char                    control_path[108];
 };
 
 /* ---- static prototypes ---- */
@@ -263,6 +270,13 @@ static gboolean reload_done_cb(gpointer data);
 static void *reload_thread(void *arg);
 static void models_reload(int reply_fd);
 static void notify_models_not_ready(enum app_state s);
+static void control_socket_path(char *buf, size_t n);
+static const char *state_description(enum app_state s);
+static gboolean on_control_accept(gint fd, GIOCondition cond,
+                                  gpointer data);
+static int init_control_socket(void);
+static void free_control_socket(void);
+static void usage(FILE *out, const char *prog);
 static void on_activate(GtkStatusIcon *icon, gpointer data);
 static void on_toggle(GtkMenuItem *item, gpointer data);
 static void on_unload(GtkMenuItem *item, gpointer data);
@@ -1528,6 +1542,153 @@ static void notify_models_not_ready(enum app_state s)
                    true);
 }
 
+/* ---- control socket (enabled by --mcp) ---- */
+
+/**
+ * control_socket_path - Path of the daemon's control socket.
+ * @buf: out, receives the path.
+ * @n: size of @buf.
+ *
+ * Derived from the uid alone (not from XDG_RUNTIME_DIR), so the
+ * daemon and an MCP client spawned with a stripped environment
+ * always agree on it: /run/user/<uid>/opons-voxd.sock when that
+ * directory exists, /tmp/opons-voxd-<uid>.sock otherwise.
+ */
+static void control_socket_path(char *buf, size_t n)
+{
+    char dir[64];
+    struct stat st;
+
+    snprintf(dir, sizeof(dir), "/run/user/%u", (unsigned)getuid());
+    if (stat(dir, &st) == 0 && S_ISDIR(st.st_mode))
+        snprintf(buf, n, "%s/opons-voxd.sock", dir);
+    else
+        snprintf(buf, n, "/tmp/opons-voxd-%u.sock",
+                 (unsigned)getuid());
+}
+
+static const char *state_description(enum app_state s)
+{
+    switch (s) {
+    case STATE_IDLE:
+        return "loaded: Whisper models in GPU memory, dictation idle";
+    case STATE_RECORDING:
+        return "loaded: Whisper models in GPU memory, a dictation "
+               "is being recorded";
+    case STATE_PROCESSING:
+        return "loaded: Whisper models in GPU memory, a dictation "
+               "is being transcribed";
+    case STATE_UNLOADED:
+        return "unloaded: Whisper models freed from GPU memory, "
+               "dictation disabled";
+    case STATE_LOADING:
+        return "loading: Whisper models are being reloaded into GPU "
+               "memory";
+    }
+    return "unknown";
+}
+
+/*
+ * One request per connection: the client sends "status", "unload"
+ * or "reload" followed by '\n', and gets back one line starting
+ * with "ok " or "err " before the daemon closes the socket. A reload
+ * keeps the connection open until loading has finished. The read
+ * runs on the GTK thread with a 1 s timeout; the socket is 0600, so
+ * only the owner can stall it.
+ */
+static gboolean on_control_accept(gint fd, GIOCondition cond,
+                                  gpointer data)
+{
+    char cmd[32];
+    size_t used = 0;
+    ssize_t r;
+    int cfd;
+    struct timeval tv = { .tv_sec = 1, .tv_usec = 0 };
+
+    (void)cond;
+    (void)data;
+    cfd = accept(fd, NULL, NULL);
+    if (cfd < 0)
+        return G_SOURCE_CONTINUE;
+    (void)fcntl(cfd, F_SETFD, FD_CLOEXEC);
+    (void)setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    while (used < sizeof(cmd) - 1) {
+        r = recv(cfd, cmd + used, sizeof(cmd) - 1 - used, 0);
+        if (r <= 0)
+            break;
+        used += (size_t)r;
+        if (memchr(cmd, '\n', used))
+            break;
+    }
+    cmd[used] = '\0';
+    cmd[strcspn(cmd, "\r\n")] = '\0';
+    if (strcmp(cmd, "status") == 0)
+        control_reply(cfd, true,
+                      state_description(atomic_load(&g_app.state)));
+    else if (strcmp(cmd, "unload") == 0)
+        models_unload(cfd);
+    else if (strcmp(cmd, "reload") == 0)
+        models_reload(cfd);
+    else
+        control_reply(cfd, false,
+                      "unknown command (expected status, unload or "
+                      "reload)");
+    return G_SOURCE_CONTINUE;
+}
+
+/**
+ * init_control_socket - Listen on the control socket.
+ *
+ * Must run after acquire_instance_lock(): holding the lock proves
+ * that any socket file already at the path is stale, so it is
+ * removed. The socket is created 0600.
+ *
+ * Return: 0 on success, -1 on failure (logged; the daemon keeps
+ * running without remote control).
+ */
+static int init_control_socket(void)
+{
+    struct sockaddr_un addr;
+    mode_t old_mask;
+    int fd;
+    int rc;
+
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    control_socket_path(addr.sun_path, sizeof(addr.sun_path));
+    fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (fd < 0) {
+        perror("mcp: socket");
+        return -1;
+    }
+    unlink(addr.sun_path);
+    old_mask = umask(077);
+    rc = bind(fd, (struct sockaddr *)&addr, sizeof(addr));
+    umask(old_mask);
+    if (rc != 0 || listen(fd, 4) != 0) {
+        fprintf(stderr, "mcp: cannot listen on %s: %s\n",
+                addr.sun_path, strerror(errno));
+        close(fd);
+        return -1;
+    }
+    g_app.control_fd = fd;
+    snprintf(g_app.control_path, sizeof(g_app.control_path), "%s",
+             addr.sun_path);
+    g_unix_fd_add(fd, G_IO_IN, on_control_accept, NULL);
+    fprintf(stderr, "mcp: control socket listening on %s\n",
+            addr.sun_path);
+    return 0;
+}
+
+static void free_control_socket(void)
+{
+    if (g_app.control_fd < 0)
+        return;
+    close(g_app.control_fd);
+    unlink(g_app.control_path);
+    g_app.control_fd = -1;
+}
+
 /* ---- GTK tray handlers ---- */
 
 static void on_activate(GtkStatusIcon *icon, gpointer data)
@@ -2262,10 +2423,45 @@ static void build_tray(void)
 
 /* ---- main ---- */
 
+static void usage(FILE *out, const char *prog)
+{
+    fprintf(out,
+            "Usage: %s [-h] [-m]\n"
+            "\n"
+            "Local push-to-talk dictation daemon (tray icon).\n"
+            "\n"
+            "  -h, --help   show this help and exit\n"
+            "  -m, --mcp    listen on the control socket so AI agents\n"
+            "               can unload/reload the Whisper models\n"
+            "               (off by default)\n",
+            prog);
+}
+
 int main(int argc, char **argv)
 {
+    static const struct option long_opts[] = {
+        { "help", no_argument, NULL, 'h' },
+        { "mcp",  no_argument, NULL, 'm' },
+        { NULL,   0,           NULL, 0   },
+    };
     PaError err;
+    bool mcp_on = false;
+    int opt;
 
+    while ((opt = getopt_long(argc, argv, "hm", long_opts, NULL)) != -1) {
+        switch (opt) {
+        case 'h':
+            usage(stdout, argv[0]);
+            return 0;
+        case 'm':
+            mcp_on = true;
+            break;
+        default:
+            usage(stderr, argv[0]);
+            return 2;
+        }
+    }
+    g_app.control_fd = -1;
     setlocale(LC_CTYPE, "");
     if (!XInitThreads()) {
         fprintf(stderr, "XInitThreads failed\n");
@@ -2312,9 +2508,12 @@ int main(int argc, char **argv)
     build_menu();
     build_tray();
     init_hotkey();
+    if (mcp_on)
+        init_control_socket();
     gtk_main();
 
     /* shutdown */
+    free_control_socket();
     if (g_app.stream)
         audio_stop();
     free_hotkey();
