@@ -50,7 +50,6 @@ static void usage(FILE *out, const char *prog);
 
 /* ---- MCP server ---- */
 
-#define MCP_SERVER_VERSION  "1.0.0"
 #define MCP_LATEST_PROTOCOL "2025-11-25"
 #define CONTROL_TIMEOUT_SEC 120
 
@@ -333,7 +332,7 @@ static void mcp_initialize(const char *id, size_t id_len,
            "\"protocolVersion\":\"%s\","
            "\"capabilities\":{\"tools\":{}},"
            "\"serverInfo\":{\"name\":\"opons-voxd\","
-           "\"version\":\"" MCP_SERVER_VERSION "\"},"
+           "\"version\":\"" OPONS_VOXD_VERSION "\"},"
            "\"instructions\":",
            (int)id_len, id, ver);
     json_put_str(mcp_instructions);
@@ -433,7 +432,7 @@ static void usage(FILE *out, const char *prog)
     fprintf(out,
             "Usage: %s [-h]\n"
             "\n"
-            "MCP server on stdin/stdout, spawned by an AI client. Lets\n"
+            "opons-voxd-mcp " OPONS_VOXD_VERSION ": MCP server on stdin/stdout, spawned by an AI client. Lets\n"
             "it unload/reload the Whisper models of the opons-voxd\n"
             "daemon, which must run with --mcp.\n"
             "\n"
@@ -459,7 +458,8 @@ int main(int argc, char **argv)
         usage(stderr, argv[0]);
         return 2;
     }
-    fprintf(stderr, "mcp: stdio server ready\n");
+    fprintf(stderr, "mcp: opons-voxd-mcp " OPONS_VOXD_VERSION
+            " stdio server ready\n");
     while (getline(&line, &cap, stdin) != -1)
         mcp_handle_line(line);
     free(line);

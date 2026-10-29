@@ -19,6 +19,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+/* Release version, reported by both binaries. */
+#define OPONS_VOXD_VERSION  "1.1.0"
+
 /**
  * control_socket_path - Path of the daemon's control socket.
  * @buf: out, receives the path.

@@ -2438,7 +2438,8 @@ static void usage(FILE *out, const char *prog)
     fprintf(out,
             "Usage: %s [-h] [-m]\n"
             "\n"
-            "Local push-to-talk dictation daemon (tray icon).\n"
+            "opons-voxd " OPONS_VOXD_VERSION
+            ": local push-to-talk dictation daemon (tray icon).\n"
             "\n"
             "  -h, --help   show this help and exit\n"
             "  -m, --mcp    listen on the control socket so AI agents\n"
@@ -2472,6 +2473,7 @@ int main(int argc, char **argv)
         }
     }
     g_app.control_fd = -1;
+    fprintf(stderr, "opons-voxd " OPONS_VOXD_VERSION " starting\n");
     setlocale(LC_CTYPE, "");
     if (!XInitThreads()) {
         fprintf(stderr, "XInitThreads failed\n");

@@ -67,7 +67,7 @@ The hotkey is configurable via `OPONS_VOXD_PTT_HOTKEY` (see [Configuration](#con
 - **100% local** — audio is processed on your CPU or GPU, never sent anywhere
 - **GPU accelerated** — NVIDIA CUDA support for near-instant transcription
 - **99 languages** — powered by OpenAI Whisper (French, English, German, Chinese, Japanese, Spanish, Italian, and many more)
-- **Lightweight** — single C binary (~100 KB), no Python, no runtime dependencies
+- **Lightweight** — plain C, no Python: the daemon, plus an optional 25 KB MCP server linked against libc only
 - **System tray integration** — unobtrusive icon in your taskbar
 - **Push-to-talk hotkey** — hold `Ctrl+Shift+Space` (configurable) to record, release to type the transcript at the keyboard cursor
 - **Push-to-talk-and-translate hotkey** — a second, independently configurable hotkey types an English translation of your speech instead of a verbatim transcript
@@ -186,11 +186,13 @@ This will:
 3. Compile whisper.cpp (3–10 min depending on your machine)
 4. Download the `medium` model (~1.5 GB) from Hugging Face
 
-### Step 4 — Build the binary
+### Step 4 — Build the binaries
 
 ```bash
 make
 ```
+
+This builds `opons-voxd` (the daemon) and `opons-voxd-mcp` (the optional MCP server, see [Free the GPU for local AI](#free-the-gpu-for-local-ai-mcp-server)).
 
 You'll see either `[build] CUDA detected` or `[build] CUDA not found — CPU only`.
 
