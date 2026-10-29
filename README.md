@@ -36,7 +36,7 @@ Two ways to dictate, available simultaneously:
 5. A desktop notification displays the text for 10 seconds
 6. Paste anywhere with `Ctrl+Shift+V`, `Shift+Insert`, or middle-click
 
-**Right-click** the icon for a menu with Toggle / Quit.
+**Right-click** the icon for a menu with Toggle / Unload models / Reload models / Quit (see [Free the GPU for local AI](#free-the-gpu-for-local-ai-mcp-server)).
 
 ### Push-to-talk mode — hold a hotkey, type at the cursor
 
@@ -75,6 +75,7 @@ The hotkey is configurable via `OPONS_VOXD_PTT_HOTKEY` (see [Configuration](#con
 - **Desktop notifications** — transcribed text displayed as a notification
 - **Voice commands** — built-in French commands for punctuation and formatting, disabled by default (`OPONS_VOXD_COMMANDS=1` to enable, see [Voice Commands](#voice-commands))
 - **Auto-capitalization** — sentences are capitalized automatically
+- **Free the GPU on demand** — unload the Whisper models from VRAM (tray menu, or any AI agent through the built-in MCP server) and reload them when done
 - **Auto-start** — can be configured to launch at login
 
 ---
@@ -296,6 +297,46 @@ Voice commands (see [Voice Commands](#voice-commands)) are matched against `OPON
 
 If the hotkey is malformed (unknown modifier or unknown keysym name) or the key isn't on your active XKB layout, push-to-talk is disabled with a specific stderr message and the tray icon mode keeps working normally.
 
+### Free the GPU for local AI (MCP server)
+
+The Whisper models stay in GPU memory all the time (about 3.8 GB for `large-v3-turbo` + `medium`). When you need that VRAM for something else — a local LLM, an image model, a training run — opons-voxd can unload them and reload them afterwards (about 3 s), without quitting.
+
+**Tray icon states:**
+
+| Icon | State |
+|:---:|---|
+| white ring | models loaded, ready |
+| red disc | recording |
+| orange disc | transcribing |
+| grey slashed ring (⊘) | models unloaded, GPU memory freed, dictation disabled |
+| blue three-quarter arc | models reloading |
+
+While unloaded, clicking the icon or pressing a push-to-talk hotkey shows an error notification instead of recording. The tooltip also says the models are unloaded.
+
+**By hand:** right-click the tray icon > *Unload models (free GPU memory)*, then *Reload models*.
+
+**From an AI agent (MCP):** start the daemon with `-m` / `--mcp` (off by default; `launch.sh` turns it on). It then listens on a Unix socket only you can access (`/run/user/<uid>/opons-voxd.sock`, mode 0600). The same binary run with `-s` / `--mcp-stdio` is a [Model Context Protocol](https://modelcontextprotocol.io) server over stdio that forwards to that socket, exposing three tools:
+
+| Tool | Effect |
+|---|---|
+| `unload_models` | frees the models from GPU memory; answers `busy` while you are dictating |
+| `reload_models` | loads them back, returns once they are ready |
+| `get_status` | `loaded`, `unloaded` or `loading` |
+
+Register it in any MCP client as a stdio server whose command is the absolute path of the binary with the `--mcp-stdio` argument. With Claude Code:
+
+```bash
+claude mcp add --scope user opons-voxd -- /path/to/opons-voxd/opons-voxd --mcp-stdio
+```
+
+Most other clients (Claude Desktop, Cursor, LM Studio...) use the same JSON shape:
+
+```json
+{ "mcpServers": { "opons-voxd": { "command": "/path/to/opons-voxd/opons-voxd", "args": ["--mcp-stdio"] } } }
+```
+
+Then ask the agent to free the GPU before its heavy work and to reload the models afterwards. About 180 MB stays allocated after unloading: that is the CUDA context of the process, released only when opons-voxd exits.
+
 ### Voice Commands
 
 Voice commands are **disabled by default** to avoid unexpected replacements (e.g., saying "period" when you actually mean the word "period"). Enable them with `OPONS_VOXD_COMMANDS=1`.
@@ -431,7 +472,7 @@ ss -tnp | grep opons-voxd
 # No TCP connections.
 ```
 
-The only subprocesses launched are `xclip` (local clipboard) and `notify-send` (desktop notification). Neither makes network connections.
+The only subprocesses launched are `xclip` (local clipboard) and `notify-send` (desktop notification). Neither makes network connections. With `--mcp`, the control channel is a local Unix socket (`ss -xlp | grep opons-voxd`), never a network port.
 
 ---
 

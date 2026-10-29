@@ -19,6 +19,11 @@
  * Audio is captured via PortAudio, transcribed locally with
  * whisper.cpp, and shown as a desktop notification through libnotify.
  *
+ * The Whisper models can be unloaded to free GPU memory and reloaded
+ * later, from the tray menu or, with -m/--mcp, through a control
+ * socket. The same binary run with -s/--mcp-stdio is an MCP server
+ * that forwards the AI client's tool calls to that socket.
+ *
  * Environment variables:
  *   OPONS_VOXD_MODEL       path to ggml model
  *   OPONS_VOXD_TRANSLATE_MODEL   path to the ggml model used for
