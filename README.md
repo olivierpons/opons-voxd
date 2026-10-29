@@ -315,7 +315,7 @@ While unloaded, clicking the icon or pressing a push-to-talk hotkey shows an err
 
 **By hand:** right-click the tray icon > *Unload models (free GPU memory)*, then *Reload models*.
 
-**From an AI agent (MCP):** start the daemon with `-m` / `--mcp` (off by default; `launch.sh` turns it on). It then listens on a Unix socket only you can access (`/run/user/<uid>/opons-voxd.sock`, mode 0600). The same binary run with `-s` / `--mcp-stdio` is a [Model Context Protocol](https://modelcontextprotocol.io) server over stdio that forwards to that socket, exposing three tools:
+**From an AI agent (MCP):** start the daemon with `-m` / `--mcp` (off by default; add it to the `exec` line of `launch.sh` to keep it on). It then listens on a Unix socket only you can access (`/run/user/<uid>/opons-voxd.sock`, mode 0600). The same binary run with `-s` / `--mcp-stdio` is a [Model Context Protocol](https://modelcontextprotocol.io) server over stdio that forwards to that socket, exposing three tools:
 
 | Tool | Effect |
 |---|---|
