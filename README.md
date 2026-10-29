@@ -7,7 +7,7 @@
 **Local speech-to-text dictation for Linux — your voice never leaves your machine.**
 
 🌍 **Translations:**
-[Français](docs/README.fr.md) · [Deutsch](docs/README.de.md) · [中文](docs/README.zh.md) · [日本語](docs/README.ja.md) · [Español](docs/README.es.md) · [Italiano](docs/README.it.md)
+[Français](docs/README.fr.md) · [Deutsch](docs/README.de.md) · [中文](docs/README.zh.md) · [日本語](docs/README.ja.md) · [Español](docs/README.es.md) · [Italiano](docs/README.it.md) · [हिन्दी](docs/README.hi.md) · [العربية](docs/README.ar.md) · [বাংলা](docs/README.bn.md) · [Português](docs/README.pt.md) · [Русский](docs/README.ru.md) · [اردو](docs/README.ur.md) · [Bahasa Indonesia](docs/README.id.md) · [Kiswahili](docs/README.sw.md) · [मराठी](docs/README.mr.md) · [తెలుగు](docs/README.te.md) · [Türkçe](docs/README.tr.md) · [தமிழ்](docs/README.ta.md) · [Tiếng Việt](docs/README.vi.md) · [한국어](docs/README.ko.md)
 
 📖 **[My Workflow: Dictate in Your Language, Type in English](WORKFLOW.md)** — a real-world use case (also translated into 20 languages)
 
@@ -17,7 +17,7 @@
 
 I wanted to dictate text into any application on Linux without sending my voice to a third-party server. Every existing solution I found — browser extensions, cloud APIs, SaaS platforms — streams your audio to remote servers for transcription. That means every word you speak transits through the internet: emails, confidential documents, client data, personal notes — all of it.
 
-This project is a lightweight, fully local alternative. It runs entirely on your machine using [whisper.cpp](https://github.com/ggerganov/whisper.cpp), OpenAI's open-source speech recognition model. No network connection is needed after the initial setup. No data ever leaves your computer.
+This project is a lightweight, fully local alternative. It runs entirely on your machine using [whisper.cpp](https://github.com/ggerganov/whisper.cpp), a local runtime for Whisper, OpenAI's open-source speech recognition model. No network connection is needed after the initial setup. No data ever leaves your computer.
 
 Built with the help of AI.
 

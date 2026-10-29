@@ -18,7 +18,7 @@ No copy-pasting into a translator, no context switch, no re-typing. I speak, Eng
 
 ## Why two hotkeys, not one
 
-Translation only works well with a model actually trained on the task. I use `large-v3-turbo` for the everyday French hotkey because it's fast — but its translation quality is poor, since it was optimized for transcription speed, not translation. The translate hotkey loads a second model (`medium`) that translates properly instead. Both models sit in GPU memory at once; on a card with more than a few GB of headroom, the extra cost is a non-issue.
+Translation only works well with a model actually trained on the task. I use `large-v3-turbo` for the everyday French hotkey because it's fast — but its translation quality is poor, since it was optimized for transcription speed, not translation. The translate hotkey loads a second model (`medium`) that translates properly instead. Both models sit in GPU memory at once; on a card with more than a few GB of headroom, the extra cost is a non-issue. When I need that memory back for a local AI job, the agent running it unloads both models through the opons-voxd MCP server and reloads them afterwards; meanwhile the tray icon turns into a grey slashed ring, so I know dictation is off (see [Free the GPU for local AI](README.md#free-the-gpu-for-local-ai-mcp-server)).
 
 ## Try it
 
