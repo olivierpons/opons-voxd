@@ -64,17 +64,20 @@ ifneq ($(CUDART_FOUND),)
     HAS_CUDA     := 1
     CUDA_DIR     := /usr/local/cuda
     CUDA_LIBS    := -L$(CUDA_DIR)/lib64 -lcudart -lcublas -lcublasLt -lcuda
+    CUDA_DEFS    := -DOPONS_VOXD_CUDA
     CUDA_CMAKE := -DGGML_CUDA=ON -DCMAKE_CUDA_COMPILER=$(NVCC_FOUND)
     ifneq ($(strip $(CUDA_ARCH)),)
         CUDA_CMAKE += -DCMAKE_CUDA_ARCHITECTURES=$(CUDA_ARCH)
     endif
 else
     HAS_CUDA     := 0
+    CUDA_DEFS    :=
     CUDA_LIBS    :=
     CUDA_CMAKE   :=
 endif
 else
     HAS_CUDA     := 0
+    CUDA_DEFS    :=
     CUDA_LIBS    :=
     CUDA_CMAKE   :=
 endif
@@ -94,7 +97,7 @@ ifeq ($(HAS_CUDA),1)
 else
 	@echo "[build] CUDA not found — CPU only"
 endif
-	$(CC) $(CFLAGS) $(INCLUDES) $(PKG_CFLAGS) \
+	$(CC) $(CFLAGS) $(CUDA_DEFS) $(INCLUDES) $(PKG_CFLAGS) \
 	    opons_voxd.c -o $@ \
 	    -Wl,--start-group $(WHISPER_LIBS) -Wl,--end-group \
 	    $(PKG_LIBS) $(PA_LIBS) $(CUDA_LIBS) $(LDFLAGS) \

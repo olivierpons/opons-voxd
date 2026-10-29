@@ -63,6 +63,7 @@
 #include <getopt.h>
 #include <limits.h>
 #include <locale.h>
+#include <malloc.h>
 #include <math.h>
 #include <pthread.h>
 #include <stdatomic.h>
@@ -98,6 +99,11 @@
 
 #include "whisper.h"
 #include "voxd_control.h"
+
+#ifdef OPONS_VOXD_CUDA
+/* From cuda_runtime_api.h; cudaError_t is an int-sized enum. */
+extern int cudaDeviceReset(void);
+#endif
 
 /* ---- defines ---- */
 
@@ -271,6 +277,7 @@ static void *transcribe_thread(void *arg);
 static void control_reply(int fd, bool ok, const char *msg);
 static int load_models(void);
 static void free_models(void);
+static void release_gpu_context(void);
 static void models_unload(int reply_fd);
 static gboolean reload_done_cb(gpointer data);
 static void *reload_thread(void *arg);
@@ -1407,6 +1414,26 @@ static int load_models(void)
     return 0;
 }
 
+/**
+ * release_gpu_context - Give back what free_models() leaves behind.
+ *
+ * whisper_free() releases the model buffers but not the process's
+ * CUDA context (about 200 MiB of VRAM): cudaDeviceReset() destroys
+ * it, and the next whisper_init creates a fresh one. Only valid
+ * when no CUDA object is alive, i.e. right after free_models().
+ * malloc_trim() returns the heap freed by the unload to the system.
+ */
+static void release_gpu_context(void)
+{
+#ifdef OPONS_VOXD_CUDA
+    int rc = cudaDeviceReset();
+
+    if (rc != 0)
+        fprintf(stderr, "models: cudaDeviceReset failed (%d)\n", rc);
+#endif
+    malloc_trim(0);
+}
+
 static void free_models(void)
 {
     if (g_app.wctx_translate && g_app.wctx_translate != g_app.wctx)
@@ -1448,6 +1475,7 @@ static void models_unload(int reply_fd)
         break;
     }
     free_models();
+    release_gpu_context();
     set_state(STATE_UNLOADED);
     fprintf(stderr, "models: unloaded, GPU memory released\n");
     request_notify("opons-voxd",

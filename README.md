@@ -299,7 +299,7 @@ If the hotkey is malformed (unknown modifier or unknown keysym name) or the key 
 
 ### Free the GPU for local AI (MCP server)
 
-The Whisper models stay in GPU memory all the time (about 3.8 GB for `large-v3-turbo` + `medium`). When you need that VRAM for something else — a local LLM, an image model, a training run — opons-voxd can unload them and reload them afterwards (about 3 s), without quitting.
+The Whisper models stay in GPU memory all the time (about 3.8 GB for `large-v3-turbo` + `medium`). When you need that VRAM for something else — a local LLM, an image model, a training run — opons-voxd can unload them and reload them afterwards, without quitting. Unloading also destroys the process's CUDA context, so opons-voxd disappears from `nvidia-smi` entirely (0 MB of VRAM) and gives back about 125 MB of RAM. Reloading takes under a second when the model files are still in the page cache, a few seconds otherwise.
 
 **Tray icon states:**
 
@@ -335,7 +335,7 @@ Most other clients (Claude Desktop, Cursor, LM Studio...) use the same JSON shap
 { "mcpServers": { "opons-voxd": { "command": "/path/to/opons-voxd/opons-voxd-mcp" } } }
 ```
 
-Then ask the agent to free the GPU before its heavy work and to reload the models afterwards. About 180 MB stays allocated after unloading: that is the CUDA context of the process, released only when opons-voxd exits.
+Then ask the agent to free the GPU before its heavy work and to reload the models afterwards.
 
 ### Voice Commands
 
