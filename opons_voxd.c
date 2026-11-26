@@ -56,7 +56,8 @@
  *                            verbatim.
  */
 
-#define _POSIX_C_SOURCE 200809L
+/* _GNU_SOURCE: struct ucred / SO_PEERCRED for the control socket. */
+#define _GNU_SOURCE
 
 #include <errno.h>
 #include <fcntl.h>
@@ -66,6 +67,7 @@
 #include <malloc.h>
 #include <math.h>
 #include <pthread.h>
+#include <stdarg.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -228,6 +230,9 @@ struct app {
     bool                    ptt_refused;
     int                     control_fd;
     char                    control_path[108];
+    /* Who unloaded the models, when and why; reported by "status"
+     * while STATE_UNLOADED. Main thread only. */
+    char                    unload_info[600];
 };
 
 /* ---- static prototypes ---- */
@@ -278,12 +283,19 @@ static void control_reply(int fd, bool ok, const char *msg);
 static int load_models(void);
 static void free_models(void);
 static void release_gpu_context(void);
-static void models_unload(int reply_fd);
+static void log_event(const char *fmt, ...)
+    __attribute__((format(printf, 1, 2)));
+static void sanitize_reason(char *s);
+static void log_peer_chain(int cfd, char *who, size_t n);
+static void models_unload(int reply_fd, const char *who,
+                          const char *reason);
 static gboolean reload_done_cb(gpointer data);
 static void *reload_thread(void *arg);
-static void models_reload(int reply_fd);
+static void models_reload(int reply_fd, const char *who,
+                          const char *reason);
 static void notify_models_not_ready(enum app_state s);
 static const char *state_description(enum app_state s);
+static void control_status(int cfd);
 static gboolean on_control_accept(gint fd, GIOCondition cond,
                                   gpointer data);
 static int init_control_socket(void);
@@ -1368,6 +1380,142 @@ static void rec_stop(void)
     pthread_detach(tid);
 }
 
+/* ---- unload/reload audit log ---- */
+
+/* Write one stderr log line prefixed with the local date and time. */
+static void log_event(const char *fmt, ...)
+{
+    char stamp[32];
+    time_t now = time(NULL);
+    struct tm tm;
+    va_list ap;
+
+    localtime_r(&now, &tm);
+    strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", &tm);
+    fprintf(stderr, "[%s] ", stamp);
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+    fputc('\n', stderr);
+}
+
+/* Replace control characters with spaces and trim both ends, in place. */
+static void sanitize_reason(char *s)
+{
+    char *p;
+    size_t len;
+
+    for (p = s; *p; p++)
+        if ((unsigned char)*p < 0x20 || *p == 0x7f)
+            *p = ' ';
+    p = s;
+    while (*p == ' ')
+        p++;
+    memmove(s, p, strlen(p) + 1);
+    len = strlen(s);
+    while (len > 0 && s[len - 1] == ' ')
+        s[--len] = '\0';
+}
+
+/*
+ * read_proc_file - Read /proc/<pid>/<name> into @buf, NUL-terminated.
+ * NUL bytes (cmdline argument separators) become spaces.
+ *
+ * Return: bytes read, 0 if the file is unreadable or empty.
+ */
+static size_t read_proc_file(pid_t pid, const char *name,
+                             char *buf, size_t n)
+{
+    char path[64];
+    size_t got;
+    size_t i;
+    FILE *f;
+
+    buf[0] = '\0';
+    snprintf(path, sizeof(path), "/proc/%d/%s", (int)pid, name);
+    f = fopen(path, "re");
+    if (!f)
+        return 0;
+    got = fread(buf, 1, n - 1, f);
+    fclose(f);
+    buf[got] = '\0';
+    for (i = 0; i < got; i++)
+        if (buf[i] == '\0')
+            buf[i] = ' ';
+    while (got > 0 && (buf[got - 1] == ' ' || buf[got - 1] == '\n'))
+        buf[--got] = '\0';
+    return got;
+}
+
+/* Parent pid of @pid from /proc/<pid>/stat, 0 if unknown. */
+static pid_t proc_ppid(pid_t pid)
+{
+    char stat[512];
+    const char *p;
+    int ppid = 0;
+
+    if (!read_proc_file(pid, "stat", stat, sizeof(stat)))
+        return 0;
+    p = strrchr(stat, ')');
+    if (!p || sscanf(p + 1, " %*c %d", &ppid) != 1)
+        return 0;
+    return (pid_t)ppid;
+}
+
+/**
+ * log_peer_chain - Log which process sent a control request.
+ * @cfd: accepted control client socket.
+ * @who: out, one-line summary (client pid and its parent's command
+ *       and working directory) for the notification and "status".
+ * @n: size of @who.
+ *
+ * Logs one line per process from the client up to (excluding) pid 1,
+ * at most 12 levels: pid, working directory, command line. An MCP
+ * client's ancestors identify the AI session (its cwd is the project).
+ */
+static void log_peer_chain(int cfd, char *who, size_t n)
+{
+    struct ucred cred;
+    socklen_t len = sizeof(cred);
+    char cmd[256];
+    char cwd[PATH_MAX];
+    char path[64];
+    char parent_cmd[256] = "";
+    char parent_cwd[PATH_MAX] = "";
+    pid_t pid;
+    ssize_t r;
+    int depth;
+
+    if (getsockopt(cfd, SOL_SOCKET, SO_PEERCRED, &cred, &len) != 0) {
+        snprintf(who, n, "control socket client (peer unknown: %s)",
+                 strerror(errno));
+        log_event("control: %s", who);
+        return;
+    }
+    log_event("control: client pid %d uid %u, process chain:",
+              (int)cred.pid, (unsigned)cred.uid);
+    for (pid = cred.pid, depth = 0; pid > 1 && depth < 12;
+         pid = proc_ppid(pid), depth++) {
+        if (!read_proc_file(pid, "cmdline", cmd, sizeof(cmd)))
+            snprintf(cmd, sizeof(cmd), "?");
+        snprintf(path, sizeof(path), "/proc/%d/cwd", (int)pid);
+        r = readlink(path, cwd, sizeof(cwd) - 1);
+        cwd[r > 0 ? r : 0] = '\0';
+        log_event("control:   %*spid %d [cwd %s] %s", depth * 2, "",
+                  (int)pid, r > 0 ? cwd : "?", cmd);
+        if (depth == 1) {
+            snprintf(parent_cmd, sizeof(parent_cmd), "%s", cmd);
+            snprintf(parent_cwd, sizeof(parent_cwd), "%s",
+                     r > 0 ? cwd : "?");
+        }
+    }
+    if (parent_cmd[0])
+        snprintf(who, n, "pid %d, child of \"%.80s\" in %.120s",
+                 (int)cred.pid, parent_cmd, parent_cwd);
+    else
+        snprintf(who, n, "pid %d", (int)cred.pid);
+}
+
 /* ---- model unload / reload ---- */
 
 /**
@@ -1447,26 +1595,40 @@ static void free_models(void)
 /**
  * models_unload - Free both Whisper contexts to release GPU memory.
  * @reply_fd: control client to answer, or -1.
+ * @who: requester summary, logged and kept in unload_info.
+ * @reason: why, as given by the requester ("" when none).
  *
  * Main thread only. Refused while recording or transcribing (the
  * transcribe thread uses the contexts until it queues STATE_IDLE)
- * and while a reload is running. Idempotent once unloaded.
+ * and while a reload is running. Idempotent once unloaded. Every
+ * request is logged with its outcome.
  */
-static void models_unload(int reply_fd)
+static void models_unload(int reply_fd, const char *who,
+                          const char *reason)
 {
+    char stamp[32];
+    char body[700];
+    time_t now;
+    struct tm tm;
+    const char *why = reason[0] ? reason : "no reason given";
+
+    log_event("models: unload requested by %s, reason: %s", who, why);
     switch (atomic_load(&g_app.state)) {
     case STATE_UNLOADED:
+        log_event("models: unload ignored, already unloaded");
         control_reply(reply_fd, true,
                       "already unloaded: Whisper models are not in "
                       "GPU memory, dictation is disabled");
         return;
     case STATE_LOADING:
+        log_event("models: unload refused, reload in progress");
         control_reply(reply_fd, false,
                       "busy: models are being reloaded, retry once "
                       "the reload has finished");
         return;
     case STATE_RECORDING:
     case STATE_PROCESSING:
+        log_event("models: unload refused, dictation in progress");
         control_reply(reply_fd, false,
                       "busy: a dictation is being recorded or "
                       "transcribed, retry in a few seconds");
@@ -1477,10 +1639,17 @@ static void models_unload(int reply_fd)
     free_models();
     release_gpu_context();
     set_state(STATE_UNLOADED);
-    fprintf(stderr, "models: unloaded, GPU memory released\n");
-    request_notify("opons-voxd",
-                   "Models unloaded, GPU memory freed. Dictation is "
-                   "disabled until they are reloaded.", false);
+    now = time(NULL);
+    localtime_r(&now, &tm);
+    strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", &tm);
+    snprintf(g_app.unload_info, sizeof(g_app.unload_info),
+             "since %s, by %s, reason: %s", stamp, who, why);
+    log_event("models: unloaded, GPU memory released");
+    snprintf(body, sizeof(body),
+             "Models unloaded, GPU memory freed. Dictation is "
+             "disabled until they are reloaded.\nBy: %s\nReason: %s",
+             who, why);
+    request_notify("opons-voxd", body, false);
     control_reply(reply_fd, true,
                   "unloaded: Whisper models freed from GPU memory, "
                   "dictation disabled until reload");
@@ -1492,7 +1661,8 @@ static gboolean reload_done_cb(gpointer data)
 
     if (msg->rc == 0) {
         set_state(STATE_IDLE);
-        fprintf(stderr, "models: reloaded\n");
+        g_app.unload_info[0] = '\0';
+        log_event("models: reloaded");
         request_notify("opons-voxd",
                        "Models reloaded, dictation enabled.", false);
         control_reply(msg->reply_fd, true,
@@ -1500,6 +1670,7 @@ static gboolean reload_done_cb(gpointer data)
                       "memory, dictation enabled");
     } else {
         set_state(STATE_UNLOADED);
+        log_event("models: reload failed, models stay unloaded");
         request_notify("opons-voxd",
                        "Failed to reload the Whisper models (see the "
                        "log). Dictation stays disabled.", true);
@@ -1525,16 +1696,21 @@ static void *reload_thread(void *arg)
  * models_reload - Recreate the Whisper contexts on a worker thread.
  * @reply_fd: control client to answer once loading has finished
  *            (it stays open until then), or -1.
+ * @who: requester summary, logged.
+ * @reason: why, as given by the requester ("" when none).
  *
  * Main thread only. Loading takes seconds, so it runs off the GTK
  * loop under STATE_LOADING. Idempotent while the models are loaded.
  */
-static void models_reload(int reply_fd)
+static void models_reload(int reply_fd, const char *who,
+                          const char *reason)
 {
     struct reload_msg *msg;
     pthread_t tid;
     enum app_state s;
 
+    log_event("models: reload requested by %s, reason: %s", who,
+              reason[0] ? reason : "no reason given");
     s = atomic_load(&g_app.state);
     if (s == STATE_LOADING) {
         control_reply(reply_fd, false,
@@ -1598,9 +1774,24 @@ static const char *state_description(enum app_state s)
     return "unknown";
 }
 
+/* Answer "status": the state, plus who unloaded and why when unloaded. */
+static void control_status(int cfd)
+{
+    char line[900];
+    enum app_state s = atomic_load(&g_app.state);
+
+    if (s == STATE_UNLOADED && g_app.unload_info[0])
+        snprintf(line, sizeof(line), "%s (%s)", state_description(s),
+                 g_app.unload_info);
+    else
+        snprintf(line, sizeof(line), "%s", state_description(s));
+    control_reply(cfd, true, line);
+}
+
 /*
  * One request per connection: the client sends "status", "unload"
- * or "reload" followed by '\n', and gets back one line starting
+ * or "reload", optionally followed by a space and a free-text
+ * reason (unload/reload), then '\n', and gets back one line starting
  * with "ok " or "err " before the daemon closes the socket. A reload
  * keeps the connection open until loading has finished. The read
  * runs on the GTK thread with a 1 s timeout; the socket is 0600, so
@@ -1609,7 +1800,9 @@ static const char *state_description(enum app_state s)
 static gboolean on_control_accept(gint fd, GIOCondition cond,
                                   gpointer data)
 {
-    char cmd[32];
+    char cmd[512];
+    char who[400];
+    char *reason;
     size_t used = 0;
     ssize_t r;
     int cfd;
@@ -1632,14 +1825,19 @@ static gboolean on_control_accept(gint fd, GIOCondition cond,
     }
     cmd[used] = '\0';
     cmd[strcspn(cmd, "\r\n")] = '\0';
-    if (strcmp(cmd, "status") == 0)
-        control_reply(cfd, true,
-                      state_description(atomic_load(&g_app.state)));
-    else if (strcmp(cmd, "unload") == 0)
-        models_unload(cfd);
-    else if (strcmp(cmd, "reload") == 0)
-        models_reload(cfd);
-    else
+    reason = cmd + strcspn(cmd, " ");
+    if (*reason)
+        *reason++ = '\0';
+    sanitize_reason(reason);
+    if (strcmp(cmd, "status") == 0) {
+        control_status(cfd);
+    } else if (strcmp(cmd, "unload") == 0) {
+        log_peer_chain(cfd, who, sizeof(who));
+        models_unload(cfd, who, reason);
+    } else if (strcmp(cmd, "reload") == 0) {
+        log_peer_chain(cfd, who, sizeof(who));
+        models_reload(cfd, who, reason);
+    } else
         control_reply(cfd, false,
                       "unknown command (expected status, unload or "
                       "reload)");
@@ -1727,14 +1925,14 @@ static void on_unload(GtkMenuItem *item, gpointer data)
 {
     (void)item;
     (void)data;
-    models_unload(-1);
+    models_unload(-1, "user, tray menu (Unload models clicked)", "");
 }
 
 static void on_reload(GtkMenuItem *item, gpointer data)
 {
     (void)item;
     (void)data;
-    models_reload(-1);
+    models_reload(-1, "user, tray menu (Reload models clicked)", "");
 }
 
 static void on_quit(GtkMenuItem *item, gpointer data)
