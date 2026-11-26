@@ -36,6 +36,8 @@ static const char *json_skip(const char *p);
 static bool json_get(const char *obj, const char *key,
                      const char **val, size_t *len);
 static bool json_str_eq(const char *val, size_t len, const char *s);
+static bool json_copy_str(const char *val, size_t len, char *out,
+                          size_t n);
 static void json_put_str(const char *s);
 static void mcp_send_result(const char *id, size_t id_len,
                             const char *result_json);
@@ -72,8 +74,12 @@ static const char mcp_tools_json[] =
     "image model, training...). Voice dictation stays disabled until "
     "reload_models is called, so always call reload_models once that "
     "work is done. Fails with 'busy' while the user is dictating: "
-    "wait a few seconds and retry.\","
-    "\"inputSchema\":{\"type\":\"object\",\"properties\":{}},"
+    "wait a few seconds and retry. Always pass a reason.\","
+    "\"inputSchema\":{\"type\":\"object\",\"properties\":{"
+    "\"reason\":{\"type\":\"string\",\"description\":\"Why, in a "
+    "few words: the workload and project (e.g. 'local LLM via ollama "
+    "for dialog generation in project X'). Logged by the daemon and "
+    "shown to the user.\"}}},"
     MCP_TOOL_ANNOTATIONS("false") "},"
     "{\"name\":\"reload_models\","
     "\"title\":\"Reload dictation models\","
@@ -82,7 +88,11 @@ static const char mcp_tools_json[] =
     "has finished (a few seconds). Call it as soon as the GPU work "
     "that required unload_models is done, even if that work "
     "failed.\","
-    "\"inputSchema\":{\"type\":\"object\",\"properties\":{}},"
+    "\"inputSchema\":{\"type\":\"object\",\"properties\":{"
+    "\"reason\":{\"type\":\"string\",\"description\":\"Why, in a "
+    "few words: the workload and project (e.g. 'local LLM via ollama "
+    "for dialog generation in project X'). Logged by the daemon and "
+    "shown to the user.\"}}},"
     MCP_TOOL_ANNOTATIONS("false") "},"
     "{\"name\":\"get_status\","
     "\"title\":\"Dictation models status\","
@@ -101,7 +111,8 @@ static const char mcp_instructions[] =
 
 /**
  * control_request - Send one command to the daemon's control socket.
- * @cmd: "status", "unload" or "reload".
+ * @cmd: "status", "unload" or "reload", optionally followed by a
+ *       space and a reason (no newline).
  * @reply: out, the daemon's explanation without its "ok"/"err"
  *         prefix, or why it could not be reached.
  * @n: size of @reply.
@@ -113,7 +124,7 @@ static int control_request(const char *cmd, char *reply, size_t n)
 {
     struct sockaddr_un addr;
     struct timeval tv = { .tv_sec = CONTROL_TIMEOUT_SEC, .tv_usec = 0 };
-    char line[64];
+    char line[600];
     size_t used = 0;
     ssize_t r;
     int fd;
@@ -345,13 +356,54 @@ static void mcp_initialize(const char *id, size_t id_len,
  * with isError, not JSON-RPC errors, so the model sees them and can
  * retry; only an unknown tool name is a protocol error.
  */
+/**
+ * json_copy_str - Unescape the raw JSON string @val/@len into @out.
+ *
+ * Simplified: "\\uXXXX" becomes '?', any other escape keeps its
+ * character, control characters become spaces (the control protocol
+ * is line-based). Truncates to @n - 1 bytes.
+ *
+ * Return: false if @val is not a string.
+ */
+static bool json_copy_str(const char *val, size_t len, char *out,
+                          size_t n)
+{
+    size_t i;
+    size_t o = 0;
+    char c;
+
+    if (len < 2 || val[0] != '"' || val[len - 1] != '"')
+        return false;
+    for (i = 1; i < len - 1 && o < n - 1; i++) {
+        c = val[i];
+        if (c == '\\' && i + 1 < len - 1) {
+            c = val[++i];
+            if (c == 'u') {
+                i += 4;
+                c = '?';
+            } else if (c == 'n' || c == 't' || c == 'r') {
+                c = ' ';
+            }
+        }
+        out[o++] = (unsigned char)c < 0x20 ? ' ' : c;
+    }
+    out[o] = '\0';
+    return true;
+}
+
 static void mcp_tools_call(const char *id, size_t id_len,
                            const char *params)
 {
     const char *name;
     const char *cmd;
+    const char *args;
+    const char *rval;
     size_t len;
-    char reply[512];
+    size_t alen;
+    size_t rlen;
+    char reason[400] = "";
+    char full[sizeof(reason) + 16];
+    char reply[1024];
     int rc;
 
     if (!json_get(params, "name", &name, &len)) {
@@ -368,7 +420,13 @@ static void mcp_tools_call(const char *id, size_t id_len,
         mcp_send_error(id, id_len, -32602, "unknown tool");
         return;
     }
-    rc = control_request(cmd, reply, sizeof(reply));
+    if (strcmp(cmd, "status") != 0 &&
+        json_get(params, "arguments", &args, &alen) &&
+        json_get(args, "reason", &rval, &rlen))
+        (void)json_copy_str(rval, rlen, reason, sizeof(reason));
+    snprintf(full, sizeof(full), "%s%s%s", cmd, reason[0] ? " " : "",
+             reason);
+    rc = control_request(full, reply, sizeof(reply));
     fprintf(stderr, "mcp: %s -> %s %s\n", cmd,
             rc == 0 ? "ok" : "err", reply);
     printf("{\"jsonrpc\":\"2.0\",\"id\":%.*s,\"result\":{"

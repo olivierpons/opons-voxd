@@ -6,9 +6,11 @@
  * Copyright (C) 2026 Olivier Pons
  *
  * Protocol: one request per connection. The client sends "status",
- * "unload" or "reload" followed by '\n'; the daemon answers one line
- * starting with "ok " or "err " and closes the socket. A reload is
- * answered only once loading has finished.
+ * "unload" or "reload" (the last two optionally followed by a space
+ * and a free-text reason, logged with the requester), then '\n';
+ * the daemon answers one line starting with "ok " or "err " and
+ * closes the socket. A reload is answered only once loading has
+ * finished.
  */
 
 #ifndef VOXD_CONTROL_H
